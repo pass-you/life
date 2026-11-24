@@ -1080,10 +1080,16 @@ main,
   height: 2.6em;
   border-radius: 2.6em;
   font-size: 14px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(239, 245, 250, 0.42));
+  background-image:
+    radial-gradient(60% 90% at 28% 15%, rgba(255, 255, 255, 0.9), transparent 62%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(239, 245, 250, 0.42));
+  background-size: 180% 100%, 100% 100%;
+  background-position: 0% 0, 0 0;
   box-shadow: 0 1.2em 2.4em rgba(80, 105, 130, 0.05);
   filter: blur(0.6px);
-  animation: cloudDrift 44s ease-in-out infinite alternate;
+  animation:
+    cloudDrift 44s ease-in-out infinite alternate,
+    cloudShade 16s ease-in-out infinite alternate;
 }
 
 .scene-cloud::before,
@@ -1120,7 +1126,7 @@ main,
   left: 36%;
   font-size: 13px;
   opacity: 0.55;
-  animation-duration: 56s;
+  animation-duration: 56s, 18s;
   animation-delay: -8s;
 }
 
@@ -1129,21 +1135,27 @@ main,
   right: 4%;
   font-size: 18px;
   opacity: 0.45;
-  animation-duration: 38s;
+  animation-duration: 38s, 14s;
   animation-delay: -4s;
 }
 
 .weather-overlay[data-weather="rain"] .scene-cloud,
 .weather-overlay[data-weather="heavyRain"] .scene-cloud {
-  background: linear-gradient(180deg, rgba(236, 243, 248, 0.88), rgba(172, 192, 210, 0.38));
+  background-image:
+    radial-gradient(60% 90% at 28% 15%, rgba(255, 255, 255, 0.82), transparent 62%),
+    linear-gradient(180deg, rgba(236, 243, 248, 0.88), rgba(172, 192, 210, 0.38));
 }
 
 .weather-overlay[data-weather="snow"] .scene-cloud {
-  background: linear-gradient(180deg, rgba(248, 252, 255, 0.9), rgba(200, 218, 235, 0.4));
+  background-image:
+    radial-gradient(60% 90% at 28% 15%, rgba(255, 255, 255, 0.86), transparent 62%),
+    linear-gradient(180deg, rgba(248, 252, 255, 0.9), rgba(200, 218, 235, 0.4));
 }
 
 .weather-overlay[data-weather="storm"] .scene-cloud {
-  background: linear-gradient(180deg, rgba(88, 100, 116, 0.34), rgba(120, 134, 150, 0.12));
+  background-image:
+    radial-gradient(60% 90% at 28% 15%, rgba(190, 204, 220, 0.26), transparent 62%),
+    linear-gradient(180deg, rgba(88, 100, 116, 0.34), rgba(120, 134, 150, 0.12));
   box-shadow: none;
   filter: blur(0.9px);
 }
@@ -1151,6 +1163,11 @@ main,
 @keyframes cloudDrift {
   from { transform: translateX(-22px); }
   to { transform: translateX(22px); }
+}
+
+@keyframes cloudShade {
+  from { background-position: 0% 0, 0 0; }
+  to { background-position: 100% 0, 0 0; }
 }
 
 .scene-rain,
@@ -1176,31 +1193,77 @@ main,
   background: linear-gradient(180deg, rgba(200, 220, 235, 0.07), transparent 60%);
 }
 
+.rain-far,
+.rain-near {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
 .scene-rain span {
   position: absolute;
-  top: -20px;
+  top: -24px;
   left: var(--x);
   width: var(--w);
   height: var(--h);
   border-radius: 2px;
-  background: linear-gradient(180deg, rgba(105, 140, 168, 0), rgba(95, 132, 160, 0.68));
+  rotate: 12deg;
   opacity: 0;
   animation: rainFall var(--dur) linear infinite;
   animation-delay: var(--delay);
 }
 
-.weather-overlay[data-weather="heavyRain"] .scene-rain span {
-  background: linear-gradient(180deg, rgba(92, 128, 158, 0), rgba(78, 116, 146, 0.78));
+.rain-far span {
+  background: linear-gradient(180deg, rgba(120, 152, 178, 0), rgba(120, 152, 178, 0.44));
+  filter: blur(0.6px);
 }
 
-.weather-overlay[data-weather="storm"] .scene-rain span {
-  background: linear-gradient(180deg, rgba(205, 222, 236, 0), rgba(205, 222, 236, 0.58));
+.rain-near span {
+  background: linear-gradient(180deg, rgba(85, 122, 150, 0), rgba(75, 112, 142, 0.82));
+}
+
+.weather-overlay[data-weather="storm"] .rain-far span {
+  background: linear-gradient(180deg, rgba(205, 222, 236, 0), rgba(205, 222, 236, 0.38));
+}
+
+.weather-overlay[data-weather="storm"] .rain-near span {
+  background: linear-gradient(180deg, rgba(205, 222, 236, 0), rgba(205, 222, 236, 0.7));
 }
 
 @keyframes rainFall {
   0% { transform: translate3d(0, -24px, 0); opacity: 0; }
   10% { opacity: var(--o); }
-  100% { transform: translate3d(-26px, var(--fall, 400px), 0); opacity: 0; }
+  100% { transform: translate3d(-60px, var(--fall, 400px), 0); opacity: 0; }
+}
+
+.scene-splashes {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 5px;
+  height: 16px;
+  pointer-events: none;
+}
+
+.scene-splashes span {
+  position: absolute;
+  left: var(--x);
+  bottom: 0;
+  width: var(--size);
+  height: calc(var(--size) * 0.32);
+  border: 1px solid rgba(110, 145, 170, 0.55);
+  border-bottom-color: transparent;
+  border-radius: 50%;
+  opacity: 0;
+  transform: translateX(-50%) scale(0.35);
+  animation: splashRipple 0.9s ease-out infinite;
+  animation-delay: var(--delay);
+}
+
+@keyframes splashRipple {
+  0% { opacity: 0; transform: translateX(-50%) scale(0.35); }
+  18% { opacity: 0.6; }
+  100% { opacity: 0; transform: translateX(-50%) scale(1.25) translateY(-3px); }
 }
 
 .scene-snow span {
@@ -1209,20 +1272,35 @@ main,
   left: var(--x);
   width: var(--size);
   height: var(--size);
-  border-radius: 50%;
-  background: radial-gradient(circle at 34% 32%, #ffffff 0%, #f6fcff 58%, #d8eaf7 100%);
-  box-shadow: 0 0 0 0.5px rgba(150, 180, 205, 0.55), 0 2px 6px rgba(70, 100, 130, 0.5);
+  background:
+    radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.95) 0 26%, transparent 32%),
+    linear-gradient(0deg, transparent 44%, rgba(255, 255, 255, 0.92) 44% 56%, transparent 56%),
+    linear-gradient(60deg, transparent 44%, rgba(255, 255, 255, 0.92) 44% 56%, transparent 56%),
+    linear-gradient(120deg, transparent 44%, rgba(255, 255, 255, 0.92) 44% 56%, transparent 56%);
   filter: blur(var(--blur, 0px));
+  transform-origin: center;
   opacity: 0;
-  animation: snowFall var(--dur) linear infinite;
+  animation:
+    snowFall var(--dur) linear infinite,
+    snowSway var(--sway) ease-in-out infinite alternate,
+    snowSpin var(--spin) linear infinite;
   animation-delay: var(--delay);
 }
 
 @keyframes snowFall {
   0% { transform: translate3d(0, -12px, 0); opacity: 0; }
   10% { opacity: var(--o); }
-  50% { transform: translate3d(16px, calc(var(--fall, 400px) * 0.5), 0); opacity: var(--o); }
-  100% { transform: translate3d(-8px, var(--fall, 400px), 0); opacity: 0.25; }
+  90% { opacity: var(--o); }
+  100% { transform: translate3d(0, var(--fall, 400px), 0); opacity: 0; }
+}
+
+@keyframes snowSway {
+  from { translate: -10px 0; }
+  to { translate: 10px 0; }
+}
+
+@keyframes snowSpin {
+  to { rotate: 360deg; }
 }
 
 .scene-lightning {

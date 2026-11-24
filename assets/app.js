@@ -60,20 +60,22 @@
         style = '--x:' + (Math.random() * 100).toFixed(1) + '%;' +
           '--delay:-' + (Math.random() * 10).toFixed(2) + 's;' +
           '--dur:' + duration.toFixed(2) + 's;' +
+          '--sway:' + (duration * 0.55).toFixed(2) + 's;' +
+          '--spin:' + (12 + Math.random() * 12).toFixed(1) + 's;' +
           '--size:' + size.toFixed(1) + 'px;' +
           '--blur:' + (near ? 1.8 : 0).toFixed(1) + 'px;' +
           '--o:' + (near ? 0.45 + Math.random() * 0.15 : 0.8 + Math.random() * 0.2).toFixed(2) + ';';
       } else {
-        const heavy = type === 'heavyRain';
-        const width = heavy ? 1.6 + Math.random() * 1.2 : 1.1 + Math.random() * 0.5;
-        const height = heavy ? 24 + Math.random() * 18 : 14 + Math.random() * 8;
-        const duration = heavy ? 0.45 + Math.random() * 0.25 : 0.9 + Math.random() * 0.4;
+        const near = type === 'nearRain';
+        const width = near ? 1.5 + Math.random() * 1.1 : 0.7 + Math.random() * 0.4;
+        const height = near ? 22 + Math.random() * 16 : 10 + Math.random() * 6;
+        const duration = near ? 0.5 + Math.random() * 0.3 : 1.4 + Math.random() * 0.5;
         style = '--x:' + (Math.random() * 100).toFixed(1) + '%;' +
           '--delay:-' + (Math.random() * 8).toFixed(2) + 's;' +
           '--dur:' + duration.toFixed(2) + 's;' +
           '--w:' + width.toFixed(1) + 'px;' +
           '--h:' + height.toFixed(1) + 'px;' +
-          '--o:' + (heavy ? 0.55 + Math.random() * 0.35 : 0.45 + Math.random() * 0.4).toFixed(2) + ';';
+          '--o:' + (near ? 0.55 + Math.random() * 0.3 : 0.25 + Math.random() * 0.2).toFixed(2) + ';';
       }
       out += '<span style="' + style + '"></span>';
     }
@@ -84,6 +86,17 @@
     let out = '<div class="scene-clouds">';
     for (let i = 1; i <= count; i += 1) {
       out += '<span class="scene-cloud c' + i + '"></span>';
+    }
+    return out + '</div>';
+  }
+
+  function sceneSplashes(count, heavy) {
+    let out = '<div class="scene-splashes">';
+    for (let i = 0; i < count; i += 1) {
+      const size = heavy ? 8 + Math.random() * 7 : 6 + Math.random() * 5;
+      out += '<span style="--x:' + (Math.random() * 100).toFixed(1) + '%;' +
+        '--delay:-' + (Math.random() * 2.5).toFixed(2) + 's;' +
+        '--size:' + size.toFixed(1) + 'px"></span>';
     }
     return out + '</div>';
   }
@@ -101,12 +114,23 @@
     } else if (key === 'cloud') {
       html += sceneClouds(3);
     } else if (key === 'rain') {
-      html += sceneClouds(2) + '<div class="scene-rain">' + sceneParticles(56, 'rain') + '</div>';
+      html += sceneClouds(2) +
+        '<div class="scene-rain">' +
+        '<div class="rain-far">' + sceneParticles(40, 'farRain') + '</div>' +
+        '<div class="rain-near">' + sceneParticles(16, 'nearRain') + '</div>' +
+        '</div>' + sceneSplashes(10, false);
     } else if (key === 'heavyRain') {
-      html += sceneClouds(3) + '<div class="scene-rain">' + sceneParticles(120, 'heavyRain') + '</div>';
+      html += sceneClouds(3) +
+        '<div class="scene-rain">' +
+        '<div class="rain-far">' + sceneParticles(70, 'farRain') + '</div>' +
+        '<div class="rain-near">' + sceneParticles(48, 'nearRain') + '</div>' +
+        '</div>' + sceneSplashes(24, true);
     } else if (key === 'storm') {
       html += sceneClouds(3) +
-        '<div class="scene-rain">' + sceneParticles(90, 'heavyRain') + '</div>' +
+        '<div class="scene-rain">' +
+        '<div class="rain-far">' + sceneParticles(55, 'farRain') + '</div>' +
+        '<div class="rain-near">' + sceneParticles(35, 'nearRain') + '</div>' +
+        '</div>' + sceneSplashes(18, true) +
         '<svg class="scene-lightning" viewBox="0 0 40 60" aria-hidden="true">' +
         '<path d="M22 4 10 31h8l-3 22 13-27h-7l1-22"/></svg>' +
         '<div class="scene-flash"></div>';
