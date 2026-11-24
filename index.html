@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#faf7f5">
+  <title>人生日历 · Life Calendar</title>
+  <meta name="description" content="以年、月、日为三级页面的人生日历：记录每天的工作，安排明天的计划。">
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <a class="brand" href="#/" aria-label="回到年份总览">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-name">人生日历</span>
+      </a>
+
+      <nav id="crumbs" class="crumbs" aria-label="当前位置"></nav>
+
+      <div class="theme">
+        <span class="theme-label">主题</span>
+        <div id="swatches" class="swatches" role="group" aria-label="选择主题色"></div>
+        <label class="custom-color" title="自定义主题色">
+          <input id="colorInput" type="color" aria-label="自定义主题色">
+          <span aria-hidden="true">+</span>
+        </label>
+      </div>
+    </header>
+
+    <main id="app" tabindex="-1"></main>
+
+    <footer class="footer">
+      <span>内容只保存在当前浏览器本地</span>
+      <span id="todayHint"></span>
+    </footer>
+  </div>
+
+  <noscript>
+    <p style="max-width: 640px; margin: 24px auto; font-family: system-ui, sans-serif;">
+      这个日历需要启用 JavaScript 才能记录内容。
+    </p>
+  </noscript>
+
+  <script src="assets/app.js"></script>
+</body>
+</html>
