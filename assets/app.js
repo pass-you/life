@@ -42,6 +42,88 @@
       (WEATHER_ICONS[name] || WEATHER_ICONS.cloud) + '</svg>';
   }
 
+  function weatherByLabel(label) {
+    for (let i = 0; i < WEATHERS.length; i += 1) {
+      if (WEATHERS[i].label === label) return WEATHERS[i];
+    }
+    return null;
+  }
+
+  function sceneParticles(count, type) {
+    let out = '';
+    for (let i = 0; i < count; i += 1) {
+      const style = '--x:' + (Math.random() * 100).toFixed(1) + '%;' +
+        '--delay:-' + (Math.random() * 6).toFixed(2) + 's;' +
+        '--dur:' + (type === 'snow'
+          ? (6 + Math.random() * 4).toFixed(2)
+          : (0.9 + Math.random() * 0.7).toFixed(2)) + 's' +
+        (type === 'snow' ? ';--size:' + (3 + Math.random() * 3).toFixed(1) + 'px' : '');
+      out += '<span style="' + style + '"></span>';
+    }
+    return out;
+  }
+
+  function sceneClouds(count) {
+    let out = '<div class="scene-clouds">';
+    for (let i = 1; i <= count; i += 1) {
+      out += '<span class="scene-cloud c' + i + '"></span>';
+    }
+    return out + '</div>';
+  }
+
+  function weatherSceneMarkup(item) {
+    const key = item.icon;
+    const sun = '<svg class="scene-sun" viewBox="0 0 100 100" aria-hidden="true">' +
+      '<g class="sun-rays"><path d="M50 6v14M50 80v14M6 50h14M80 50h14' +
+      'M19 19l10 10M71 71l10 10M81 19 71 29M29 71 19 81"/></g>' +
+      '<circle cx="50" cy="50" r="17"/></svg>';
+
+    let html = '<div class="scene-sky"></div>';
+
+    if (key === 'sun') {
+      html += sun;
+    } else if (key === 'partly') {
+      html += sun + sceneClouds(2);
+    } else if (key === 'cloud') {
+      html += sceneClouds(3);
+    } else if (key === 'rain') {
+      html += sceneClouds(2) + '<div class="scene-rain">' + sceneParticles(22, 'rain') + '</div>';
+    } else if (key === 'heavyRain') {
+      html += sceneClouds(3) + '<div class="scene-rain">' + sceneParticles(36, 'rain') + '</div>';
+    } else if (key === 'storm') {
+      html += sceneClouds(3) +
+        '<div class="scene-rain">' + sceneParticles(30, 'rain') + '</div>' +
+        '<svg class="scene-lightning" viewBox="0 0 40 60" aria-hidden="true">' +
+        '<path d="M22 2 6 34h13l-3 24 18-32H21l1-24Z"/></svg>' +
+        '<div class="scene-flash"></div>';
+    } else if (key === 'snow') {
+      html += sceneClouds(2) + '<div class="scene-snow">' + sceneParticles(20, 'snow') + '</div>';
+    } else if (key === 'fog') {
+      html += sceneClouds(1) +
+        '<div class="scene-fog"><span></span><span></span><span></span></div>';
+    }
+
+    html += '<span class="scene-caption">今日 · ' + item.label + '</span>';
+    return html;
+  }
+
+  function renderWeatherScene(label) {
+    const scene = app.querySelector('#weather-scene');
+    if (!scene) return;
+    const item = weatherByLabel(label);
+    if (!item) {
+      scene.hidden = true;
+      scene.removeAttribute('data-weather');
+      scene.removeAttribute('aria-label');
+      scene.innerHTML = '';
+      return;
+    }
+    scene.hidden = false;
+    scene.dataset.weather = item.icon;
+    scene.setAttribute('aria-label', '今日天气：' + item.label);
+    scene.innerHTML = weatherSceneMarkup(item);
+  }
+
   const app = document.getElementById('app');
   const crumbsEl = document.getElementById('crumbs');
   const swatchEl = document.getElementById('swatches');
@@ -1064,6 +1146,7 @@
         ? '<a class="stepper-btn" href="#/' + next.y + '/' + next.m + '/' + next.d + '" aria-label="后一天">后一天 ›</a>'
         : '<span class="stepper-btn is-disabled">后一天 ›</span>') +
       '</div></div></header>' +
+      '<div id="weather-scene" class="weather-scene" role="img" hidden></div>' +
       '<div id="review-slot" class="review-slot"></div>' +
       '<div class="day-meta">' +
       '<div class="meta-row">' +
@@ -1093,6 +1176,7 @@
       '</section>';
 
     const chips = app.querySelectorAll('.mood-chip');
+    renderWeatherScene(weather);
     Array.prototype.forEach.call(chips, function (btn) {
       btn.addEventListener('click', function () {
         const current = dayNode(year, month, day, true);
@@ -1118,6 +1202,7 @@
           chip.classList.toggle('is-active', active);
           chip.setAttribute('aria-pressed', String(active));
         });
+        renderWeatherScene(nextWeather);
         markDirty();
       });
     });
