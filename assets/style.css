@@ -997,17 +997,22 @@ main,
   background: radial-gradient(58% 58% at 78% 14%, rgba(242, 181, 101, 0.09), transparent 70%);
 }
 
-.weather-overlay[data-weather="rain"]::before,
+.weather-overlay[data-weather="rain"]::before {
+  background: radial-gradient(70% 60% at 60% 0%, rgba(120, 155, 180, 0.1), transparent 70%);
+}
+
 .weather-overlay[data-weather="heavyRain"]::before {
-  background: radial-gradient(70% 60% at 60% 0%, rgba(120, 155, 180, 0.06), transparent 70%);
+  background: radial-gradient(70% 60% at 60% 0%, rgba(100, 138, 165, 0.14), transparent 70%);
 }
 
 .weather-overlay[data-weather="storm"]::before {
-  background: radial-gradient(65% 55% at 55% 0%, rgba(70, 82, 96, 0.05), transparent 70%);
+  background: radial-gradient(65% 55% at 55% 0%, rgba(70, 82, 96, 0.08), transparent 70%);
 }
 
 .weather-overlay[data-weather="snow"]::before {
-  background: radial-gradient(65% 55% at 60% 0%, rgba(150, 180, 205, 0.08), transparent 70%);
+  background:
+    radial-gradient(65% 55% at 60% 0%, rgba(140, 175, 205, 0.26), transparent 70%),
+    linear-gradient(180deg, rgba(180, 205, 228, 0.16), transparent 62%);
 }
 
 .weather-overlay[data-weather="fog"]::before {
@@ -1128,6 +1133,15 @@ main,
   animation-delay: -4s;
 }
 
+.weather-overlay[data-weather="rain"] .scene-cloud,
+.weather-overlay[data-weather="heavyRain"] .scene-cloud {
+  background: linear-gradient(180deg, rgba(236, 243, 248, 0.88), rgba(172, 192, 210, 0.38));
+}
+
+.weather-overlay[data-weather="snow"] .scene-cloud {
+  background: linear-gradient(180deg, rgba(248, 252, 255, 0.9), rgba(200, 218, 235, 0.4));
+}
+
 .weather-overlay[data-weather="storm"] .scene-cloud {
   background: linear-gradient(180deg, rgba(88, 100, 116, 0.34), rgba(120, 134, 150, 0.12));
   box-shadow: none;
@@ -1146,56 +1160,69 @@ main,
   pointer-events: none;
 }
 
+.scene-rain::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(150, 180, 202, 0.1), rgba(150, 180, 202, 0) 62%);
+  pointer-events: none;
+}
+
+.weather-overlay[data-weather="heavyRain"] .scene-rain::before {
+  background: linear-gradient(180deg, rgba(134, 166, 190, 0.16), rgba(134, 166, 190, 0) 66%);
+}
+
+.weather-overlay[data-weather="storm"] .scene-rain::before {
+  background: linear-gradient(180deg, rgba(200, 220, 235, 0.07), transparent 60%);
+}
+
 .scene-rain span {
   position: absolute;
-  top: -18px;
+  top: -20px;
   left: var(--x);
-  width: 1px;
-  height: 12px;
+  width: var(--w);
+  height: var(--h);
   border-radius: 2px;
-  background: linear-gradient(180deg, rgba(110, 145, 170, 0), rgba(110, 145, 170, 0.5));
-  filter: blur(0.2px);
+  background: linear-gradient(180deg, rgba(105, 140, 168, 0), rgba(95, 132, 160, 0.68));
   opacity: 0;
   animation: rainFall var(--dur) linear infinite;
   animation-delay: var(--delay);
 }
 
 .weather-overlay[data-weather="heavyRain"] .scene-rain span {
-  width: 1.4px;
-  height: 16px;
-  background: linear-gradient(180deg, rgba(96, 132, 158, 0), rgba(96, 132, 158, 0.62));
+  background: linear-gradient(180deg, rgba(92, 128, 158, 0), rgba(78, 116, 146, 0.78));
 }
 
 .weather-overlay[data-weather="storm"] .scene-rain span {
-  background: linear-gradient(180deg, rgba(205, 222, 236, 0), rgba(205, 222, 236, 0.48));
+  background: linear-gradient(180deg, rgba(205, 222, 236, 0), rgba(205, 222, 236, 0.58));
 }
 
 @keyframes rainFall {
-  0% { transform: translate3d(0, -20px, 0); opacity: 0; }
-  15% { opacity: 0.55; }
-  100% { transform: translate3d(-20px, 110vh, 0); opacity: 0; }
+  0% { transform: translate3d(0, -24px, 0); opacity: 0; }
+  10% { opacity: var(--o); }
+  100% { transform: translate3d(-26px, var(--fall, 400px), 0); opacity: 0; }
 }
 
 .scene-snow span {
   position: absolute;
-  top: -10px;
+  top: -12px;
   left: var(--x);
   width: var(--size);
   height: var(--size);
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.92);
-  box-shadow: 0 0 3px rgba(170, 200, 225, 0.45);
-  filter: blur(0.2px);
+  background: radial-gradient(circle at 34% 32%, #ffffff 0%, #f6fcff 58%, #d8eaf7 100%);
+  box-shadow: 0 0 0 0.5px rgba(150, 180, 205, 0.55), 0 2px 6px rgba(70, 100, 130, 0.5);
+  filter: blur(var(--blur, 0px));
   opacity: 0;
   animation: snowFall var(--dur) linear infinite;
   animation-delay: var(--delay);
 }
 
 @keyframes snowFall {
-  0% { transform: translate3d(0, -10px, 0); opacity: 0; }
-  12% { opacity: 0.9; }
-  50% { transform: translate3d(18px, 55vh, 0); opacity: 0.9; }
-  100% { transform: translate3d(-10px, 110vh, 0); opacity: 0.75; }
+  0% { transform: translate3d(0, -12px, 0); opacity: 0; }
+  10% { opacity: var(--o); }
+  50% { transform: translate3d(16px, calc(var(--fall, 400px) * 0.5), 0); opacity: var(--o); }
+  100% { transform: translate3d(-8px, var(--fall, 400px), 0); opacity: 0.25; }
 }
 
 .scene-lightning {

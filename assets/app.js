@@ -52,15 +52,29 @@
   function sceneParticles(count, type) {
     let out = '';
     for (let i = 0; i < count; i += 1) {
-      let duration;
-      if (type === 'snow') duration = 8 + Math.random() * 5;
-      else if (type === 'heavyRain') duration = 1.15 + Math.random() * 0.5;
-      else duration = 1.6 + Math.random() * 0.8;
-
-      const style = '--x:' + (Math.random() * 100).toFixed(1) + '%;' +
-        '--delay:-' + (Math.random() * 8).toFixed(2) + 's;' +
-        '--dur:' + duration.toFixed(2) + 's' +
-        (type === 'snow' ? ';--size:' + (2.4 + Math.random() * 2.4).toFixed(1) + 'px' : '');
+      let style;
+      if (type === 'snow') {
+        const near = Math.random() < 0.14;
+        const size = near ? 12 + Math.random() * 6 : 5 + Math.random() * 5;
+        const duration = 7 + Math.random() * 7;
+        style = '--x:' + (Math.random() * 100).toFixed(1) + '%;' +
+          '--delay:-' + (Math.random() * 10).toFixed(2) + 's;' +
+          '--dur:' + duration.toFixed(2) + 's;' +
+          '--size:' + size.toFixed(1) + 'px;' +
+          '--blur:' + (near ? 1.8 : 0).toFixed(1) + 'px;' +
+          '--o:' + (near ? 0.45 + Math.random() * 0.15 : 0.8 + Math.random() * 0.2).toFixed(2) + ';';
+      } else {
+        const heavy = type === 'heavyRain';
+        const width = heavy ? 1.6 + Math.random() * 1.2 : 1.1 + Math.random() * 0.5;
+        const height = heavy ? 24 + Math.random() * 18 : 14 + Math.random() * 8;
+        const duration = heavy ? 0.45 + Math.random() * 0.25 : 0.9 + Math.random() * 0.4;
+        style = '--x:' + (Math.random() * 100).toFixed(1) + '%;' +
+          '--delay:-' + (Math.random() * 8).toFixed(2) + 's;' +
+          '--dur:' + duration.toFixed(2) + 's;' +
+          '--w:' + width.toFixed(1) + 'px;' +
+          '--h:' + height.toFixed(1) + 'px;' +
+          '--o:' + (heavy ? 0.55 + Math.random() * 0.35 : 0.45 + Math.random() * 0.4).toFixed(2) + ';';
+      }
       out += '<span style="' + style + '"></span>';
     }
     return out;
@@ -87,17 +101,17 @@
     } else if (key === 'cloud') {
       html += sceneClouds(3);
     } else if (key === 'rain') {
-      html += sceneClouds(2) + '<div class="scene-rain">' + sceneParticles(16, 'rain') + '</div>';
+      html += sceneClouds(2) + '<div class="scene-rain">' + sceneParticles(56, 'rain') + '</div>';
     } else if (key === 'heavyRain') {
-      html += sceneClouds(3) + '<div class="scene-rain">' + sceneParticles(26, 'heavyRain') + '</div>';
+      html += sceneClouds(3) + '<div class="scene-rain">' + sceneParticles(120, 'heavyRain') + '</div>';
     } else if (key === 'storm') {
       html += sceneClouds(3) +
-        '<div class="scene-rain">' + sceneParticles(20, 'rain') + '</div>' +
+        '<div class="scene-rain">' + sceneParticles(90, 'heavyRain') + '</div>' +
         '<svg class="scene-lightning" viewBox="0 0 40 60" aria-hidden="true">' +
         '<path d="M22 4 10 31h8l-3 22 13-27h-7l1-22"/></svg>' +
         '<div class="scene-flash"></div>';
     } else if (key === 'snow') {
-      html += sceneClouds(2) + '<div class="scene-snow">' + sceneParticles(16, 'snow') + '</div>';
+      html += sceneClouds(2) + '<div class="scene-snow">' + sceneParticles(160, 'snow') + '</div>';
     } else if (key === 'fog') {
       html += sceneClouds(1) +
         '<div class="scene-fog"><span></span><span></span><span></span></div>';
@@ -111,15 +125,18 @@
     if (!overlay) return;
     if (overlay.hidden) {
       overlay.style.height = '0px';
+      overlay.style.setProperty('--fall', '0px');
       return;
     }
     const meta = app.querySelector('.day-meta');
     if (!meta) {
       overlay.style.height = '0px';
+      overlay.style.setProperty('--fall', '0px');
       return;
     }
-    const bottom = meta.getBoundingClientRect().top + window.scrollY;
-    overlay.style.height = Math.max(0, Math.round(bottom)) + 'px';
+    const bottom = Math.max(0, Math.round(meta.getBoundingClientRect().top + window.scrollY));
+    overlay.style.height = bottom + 'px';
+    overlay.style.setProperty('--fall', bottom + 'px');
   }
 
   function hideWeatherOverlay() {
