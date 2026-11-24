@@ -707,6 +707,66 @@ textarea:focus {
   min-height: 190px;
 }
 
+/* ---------- Markdown 原位排版（Vditor IR） ---------- */
+
+.md-field .vditor {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  box-shadow: none;
+  overflow: hidden;
+  font-family: var(--font-sans);
+}
+
+.md-field .vditor-toolbar,
+.md-field .vditor-resize,
+.md-field .vditor-counter,
+.md-field .vditor-outline {
+  display: none !important;
+}
+
+.md-field .vditor-content,
+.md-field .vditor-ir {
+  padding: 0 !important;
+  background: transparent;
+}
+
+.md-field .vditor-ir pre.vditor-reset {
+  padding: 14px 16px !important;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.8;
+}
+
+.md-field .vditor-ir .vditor-reset a {
+  color: var(--accent-ink);
+}
+
+.md-field .vditor-ir .vditor-reset code {
+  border-radius: 5px;
+  background: var(--accent-soft);
+}
+
+.md-field .vditor-ir .vditor-reset blockquote {
+  border-left: 2px solid var(--accent-line);
+  color: var(--muted);
+}
+
+.md-field .vditor-ir .vditor-reset table th {
+  background: var(--accent-ghost);
+}
+
+.md-field .vditor-ir .vditor-reset img {
+  max-width: 100%;
+  border-radius: 8px;
+}
+
+.md-field .vditor-panel {
+  border-color: var(--line);
+}
+
 /* ---------- Markdown 原位排版 ---------- */
 
 .md-field {

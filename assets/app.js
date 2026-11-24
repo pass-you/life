@@ -1070,90 +1070,69 @@
     return out.join('');
   }
 
-  function bindMarkdownField(selector, getValue, setValue) {
-    const input = app.querySelector(selector);
-    if (!input) return;
-    const field = input.closest('.md-field');
-    const rendered = field ? field.querySelector('.md-rendered') : null;
-    input.value = getValue() || '';
-    let renderTimer = 0;
-    let blurTimer = 0;
+  let vditorInstances = [];
 
-    function render() {
-      clearTimeout(renderTimer);
-      renderTimer = 0;
-      if (!rendered) return;
-      const html = renderMarkdown(input.value);
-      rendered.innerHTML = html || '<p class="md-empty">点击开始写 Markdown 笔记。</p>';
-      decorateMarkdown(rendered);
-    }
-
-    function showEditor() {
-      clearTimeout(blurTimer);
-      if (rendered) rendered.hidden = true;
-      input.hidden = false;
-      input.focus();
-      const end = input.value.length;
-      try { input.setSelectionRange(end, end); } catch (err) { /* 忽略 */ }
-    }
-
-    function showRendered() {
-      clearTimeout(blurTimer);
-      if (!input.value.trim()) {
-        input.hidden = false;
-        if (rendered) rendered.hidden = true;
-        return;
-      }
-      render();
-      input.hidden = true;
-      if (rendered) rendered.hidden = false;
-    }
-
-    input.addEventListener('input', function () {
-      setValue(input.value);
-      markDirty();
-      clearTimeout(renderTimer);
-      renderTimer = setTimeout(render, 120);
+  function destroyVditorEditors() {
+    vditorInstances.forEach(function (editor) {
+      try { editor.destroy(); } catch (err) { /* 忽略 */ }
     });
+    vditorInstances = [];
+  }
 
-    input.addEventListener('focus', function () {
-      clearTimeout(blurTimer);
-    });
-    input.addEventListener('blur', function () {
-      clearTimeout(blurTimer);
-      blurTimer = setTimeout(showRendered, 150);
-    });
-    input.addEventListener('keydown', function (event) {
-      if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
-        event.preventDefault();
-        input.blur();
-      }
-    });
+  function bindVditorField(selector, getValue, setValue, height, placeholder) {
+    const host = app.querySelector(selector);
+    if (!host) return;
+    const initial = getValue() || '';
 
-    if (rendered) {
-      rendered.tabIndex = 0;
-      rendered.setAttribute('role', 'group');
-      rendered.setAttribute('aria-label', 'Markdown 笔记，点击编辑');
-      rendered.title = '点击编辑';
-      rendered.addEventListener('click', function (event) {
-        if (event.target.closest('a') || event.target.closest('img')) return;
-        showEditor();
+    function fallback() {
+      host.innerHTML = '';
+      const textarea = document.createElement('textarea');
+      textarea.className = 'plan-input';
+      textarea.rows = 8;
+      textarea.placeholder = placeholder || '';
+      textarea.value = initial;
+      textarea.style.minHeight = height + 'px';
+      host.appendChild(textarea);
+      textarea.addEventListener('input', function () {
+        setValue(textarea.value);
+        markDirty();
       });
-      rendered.addEventListener('keydown', function (event) {
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault();
-          showEditor();
+    }
+
+    if (!window.Vditor) {
+      fallback();
+      return;
+    }
+
+    let ready = false;
+    try {
+      const editor = new window.Vditor(host, {
+        mode: 'ir',
+        value: initial,
+        height: height,
+        placeholder: placeholder,
+        cdn: 'assets/vendor/vditor',
+        lang: 'zh_CN',
+        icon: 'ant',
+        theme: 'classic',
+        cache: { enable: false },
+        toolbar: [],
+        counter: { enable: false },
+        outline: { enable: false },
+        resize: { enable: false },
+        preview: { hljs: { enable: false } },
+        input: function (value) {
+          if (!ready) return;
+          setValue(value);
+          markDirty();
+        },
+        after: function () {
+          ready = true;
         }
       });
-    }
-
-    if (input.value.trim()) {
-      render();
-      input.hidden = true;
-      if (rendered) rendered.hidden = false;
-    } else {
-      input.hidden = false;
-      if (rendered) rendered.hidden = true;
+      vditorInstances.push(editor);
+    } catch (err) {
+      fallback();
     }
   }
 
@@ -1352,20 +1331,16 @@
       '</div></div></header>' +
       '<div id="review-slot" class="review-slot"></div>' +
       '<section class="card"><div class="card-head"><h2>年度计划</h2></div>' +
-      '<div class="md-field">' +
-      '<textarea id="plan-editor" class="plan-input" rows="7" aria-label="年度计划" ' +
-      'placeholder="这一年想完成什么？想成为怎样的人？写下几件最重要的事。"></textarea>' +
-      '<div class="md-rendered" hidden></div>' +
-      '</div></section>' +
+      '<div class="md-field"><div class="vditor-host" id="year-md-editor"></div></div></section>' +
       '<div class="section-head"><h2>选择月份</h2><p>点击月份，制定月计划并进入每日记录</p></div>' +
       '<div class="month-grid">' + months + '</div>' +
       '</section>';
 
-    bindMarkdownField('#plan-editor', function () {
+    bindVditorField('#year-md-editor', function () {
       return yearPlanOf(year);
     }, function (value) {
       yearNode(year, true).plan = value;
-    });
+    }, 260, '这一年想完成什么？想成为怎样的人？写下几件最重要的事。');
 
     wireReview('year', year);
   }
@@ -1441,22 +1416,18 @@
       '</div></div></header>' +
       '<div id="review-slot" class="review-slot"></div>' +
       '<section class="card"><div class="card-head"><h2>月计划</h2></div>' +
-      '<div class="md-field">' +
-      '<textarea id="plan-editor" class="plan-input" rows="6" aria-label="月计划" ' +
-      'placeholder="这个月的重点是什么？想在哪些事情上保持节奏？"></textarea>' +
-      '<div class="md-rendered" hidden></div>' +
-      '</div></section>' +
+      '<div class="md-field"><div class="vditor-host" id="month-md-editor"></div></div></section>' +
       '<div class="section-head"><h2>选择日期</h2><p>点击某一天，记录今天的生活与明日计划</p></div>' +
       '<div class="calendar"><div class="weekdays">' +
       WEEKDAYS.map(function (w) { return '<span>' + w + '</span>'; }).join('') +
       '</div><div class="days">' + cells + '</div></div>' +
       '</section>';
 
-    bindMarkdownField('#plan-editor', function () {
+    bindVditorField('#month-md-editor', function () {
       return monthPlanOf(year, month);
     }, function (value) {
       monthNode(year, month, true).plan = value;
-    });
+    }, 240, '这个月的重点是什么？想在哪些事情上保持节奏？');
 
     wireReview('month', year, month);
   }
@@ -1520,24 +1491,12 @@
       '</div>' +
       '<section class="card journal-card">' +
       '<div class="card-head"><h2>今日记录</h2></div>' +
-      '<div class="md-field">' +
-      '<textarea id="journal-editor" rows="9" aria-label="今日记录" ' +
-      'placeholder="工作、学习、生活、见闻、心情……今天发生了什么？"></textarea>' +
-      '<div class="md-rendered" hidden></div>' +
-      '</div></section>' +
+      '<div class="md-field"><div class="vditor-host" id="journal-md-editor"></div></div></section>' +
       '<div class="day-grid">' +
       '<section class="card"><div class="card-head"><h2>值得记住的小事</h2></div>' +
-      '<div class="md-field">' +
-      '<textarea id="highlights-editor" rows="4" aria-label="值得记住的小事" ' +
-      'placeholder="每行一件，比如早起散步、读完一章书、和朋友吃饭。"></textarea>' +
-      '<div class="md-rendered" hidden></div>' +
-      '</div></section>' +
+      '<div class="md-field"><div class="vditor-host" id="highlights-md-editor"></div></div></section>' +
       '<section class="card"><div class="card-head"><h2>明日计划</h2></div>' +
-      '<div class="md-field">' +
-      '<textarea id="next-editor" rows="4" aria-label="明日计划" ' +
-      'placeholder="明天想先做的一两件事……"></textarea>' +
-      '<div class="md-rendered" hidden></div>' +
-      '</div></section></div>' +
+      '<div class="md-field"><div class="vditor-host" id="next-md-editor"></div></div></section></div>' +
       '</section>';
 
     const chips = app.querySelectorAll('.mood-chip');
@@ -1572,23 +1531,23 @@
       });
     });
 
-    bindMarkdownField('#journal-editor', function () {
+    bindVditorField('#journal-md-editor', function () {
       return node ? node.journal : '';
     }, function (value) {
       dayNode(year, month, day, true).journal = value;
-    });
+    }, 300, '工作、学习、生活、见闻、心情……今天发生了什么？');
 
-    bindMarkdownField('#highlights-editor', function () {
+    bindVditorField('#highlights-md-editor', function () {
       return node ? node.highlights : '';
     }, function (value) {
       dayNode(year, month, day, true).highlights = value;
-    });
+    }, 180, '每行一件，比如早起散步、读完一章书、和朋友吃饭。');
 
-    bindMarkdownField('#next-editor', function () {
+    bindVditorField('#next-md-editor', function () {
       return node ? node.next : '';
     }, function (value) {
       dayNode(year, month, day, true).next = value;
-    });
+    }, 180, '明天想先做的一两件事……');
 
     wireReview('day', year, month, day);
   }
@@ -2009,6 +1968,7 @@
     }
 
     window.scrollTo(0, 0);
+    destroyVditorEditors();
     if (route.level !== 'day') hideWeatherOverlay();
     if (route.level === 'home') renderHome();
     else if (route.level === 'year') renderYear(route.y);
