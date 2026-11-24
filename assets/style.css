@@ -959,11 +959,14 @@ textarea:focus {
 
 /* ---------- 天气动画 ---------- */
 
-.view-day {
+.app {
   position: relative;
 }
 
-.view-day > *:not(.weather-overlay) {
+.topbar,
+.filebar,
+main,
+.footer {
   position: relative;
   z-index: 1;
 }
@@ -973,12 +976,10 @@ textarea:focus {
   top: 0;
   left: 0;
   right: 0;
-  height: 300px;
+  height: 0;
   z-index: 0;
   overflow: hidden;
   pointer-events: none;
-  -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 52%, transparent 100%);
-  mask-image: linear-gradient(180deg, #000 0%, #000 52%, transparent 100%);
 }
 
 .weather-overlay::before {
@@ -1016,12 +1017,12 @@ textarea:focus {
 
 .scene-sun {
   position: absolute;
-  top: -30px;
-  right: 8%;
-  width: 120px;
-  height: 120px;
+  top: 12%;
+  right: 6%;
+  width: 110px;
+  height: 110px;
   color: #df9f50;
-  opacity: 0.85;
+  opacity: 0.72;
   transform-origin: center;
   animation: sunPulse 5s ease-in-out infinite;
 }
@@ -1087,12 +1088,12 @@ textarea:focus {
 }
 
 .scene-cloud.c1 {
-  top: 4px;
+  top: 5%;
   left: 2%;
 }
 
 .scene-cloud.c2 {
-  top: 58px;
+  top: 30%;
   left: 36%;
   opacity: 0.7;
   animation-duration: 20s;
@@ -1100,7 +1101,7 @@ textarea:focus {
 }
 
 .scene-cloud.c3 {
-  top: -22px;
+  top: 47%;
   right: 3%;
   opacity: 0.55;
   animation-duration: 13s;
@@ -1149,7 +1150,7 @@ textarea:focus {
 @keyframes rainFall {
   0% { transform: translate3d(0, -20px, 0); opacity: 0; }
   12% { opacity: 0.8; }
-  100% { transform: translate3d(-16px, 330px, 0); opacity: 0; }
+  100% { transform: translate3d(-16px, 110vh, 0); opacity: 0; }
 }
 
 .scene-snow span {
@@ -1170,13 +1171,13 @@ textarea:focus {
   0% { transform: translate3d(0, -10px, 0); opacity: 0; }
   10% { opacity: 1; }
   50% { transform: translate3d(14px, 72px, 0); opacity: 1; }
-  100% { transform: translate3d(-8px, 320px, 0); opacity: 0.85; }
+  100% { transform: translate3d(-8px, 110vh, 0); opacity: 0.85; }
 }
 
 .scene-lightning {
   position: absolute;
   left: 47%;
-  top: 40px;
+  top: 30%;
   width: 42px;
   height: 62px;
   fill: #ffe08a;
@@ -1226,19 +1227,19 @@ textarea:focus {
 }
 
 .scene-fog span:nth-child(1) {
-  top: 70px;
+  top: 32%;
   animation-duration: 22s;
 }
 
 .scene-fog span:nth-child(2) {
-  top: 125px;
+  top: 48%;
   opacity: 0.7;
   animation-duration: 16s;
   animation-delay: -5s;
 }
 
 .scene-fog span:nth-child(3) {
-  top: 180px;
+  top: 64%;
   opacity: 0.5;
   animation-duration: 26s;
   animation-delay: -9s;
@@ -1250,14 +1251,10 @@ textarea:focus {
 }
 
 @media (max-width: 720px) {
-  .weather-overlay {
-    height: 240px;
-  }
-
   .scene-sun {
-    width: 92px;
-    height: 92px;
-    top: -26px;
+    width: 86px;
+    height: 86px;
+    top: 10%;
     right: 2%;
   }
 }

@@ -106,19 +106,43 @@
     return html;
   }
 
+  function updateWeatherOverlaySize() {
+    const overlay = document.getElementById('weather-overlay');
+    if (!overlay) return;
+    if (overlay.hidden) {
+      overlay.style.height = '0px';
+      return;
+    }
+    const meta = app.querySelector('.day-meta');
+    if (!meta) {
+      overlay.style.height = '0px';
+      return;
+    }
+    const bottom = meta.getBoundingClientRect().top + window.scrollY;
+    overlay.style.height = Math.max(0, Math.round(bottom)) + 'px';
+  }
+
+  function hideWeatherOverlay() {
+    const overlay = document.getElementById('weather-overlay');
+    if (!overlay) return;
+    overlay.hidden = true;
+    overlay.removeAttribute('data-weather');
+    overlay.innerHTML = '';
+    overlay.style.height = '0px';
+  }
+
   function renderWeatherScene(label) {
-    const scene = app.querySelector('#weather-overlay');
+    const scene = document.getElementById('weather-overlay');
     if (!scene) return;
     const item = weatherByLabel(label);
     if (!item) {
-      scene.hidden = true;
-      scene.removeAttribute('data-weather');
-      scene.innerHTML = '';
+      hideWeatherOverlay();
       return;
     }
     scene.hidden = false;
     scene.dataset.weather = item.icon;
     scene.innerHTML = weatherSceneMarkup(item);
+    updateWeatherOverlaySize();
   }
 
   const app = document.getElementById('app');
@@ -890,10 +914,12 @@
       if (isOpen) {
         btn.setAttribute('aria-expanded', 'false');
         slot.innerHTML = '';
+        requestAnimationFrame(updateWeatherOverlaySize);
         return;
       }
       slot.innerHTML = reviewMarkup(kind, year, month, day);
       btn.setAttribute('aria-expanded', 'true');
+      requestAnimationFrame(updateWeatherOverlaySize);
     });
   }
 
@@ -1127,8 +1153,7 @@
         weatherIcon(item.icon) + '<span>' + item.label + '</span></button>';
     }).join('');
 
-    app.innerHTML = '<section class="view view-day">' +
-      '<div id="weather-overlay" class="weather-overlay" aria-hidden="true" hidden></div>' +
+    app.innerHTML = '<section class="view">' +
       '<header class="chapter"><div>' +
       '<p class="eyebrow">' + year + ' 年 ' + month + ' 月</p>' +
       '<h1 class="display">' + day + '<span class="unit">日</span></h1>' +
@@ -1640,6 +1665,7 @@
     }
 
     window.scrollTo(0, 0);
+    if (route.level !== 'day') hideWeatherOverlay();
     if (route.level === 'home') renderHome();
     else if (route.level === 'year') renderYear(route.y);
     else if (route.level === 'month') renderMonth(route.y, route.m);
@@ -1686,6 +1712,7 @@
 
   refreshStatus();
   window.addEventListener('hashchange', render);
+  window.addEventListener('resize', updateWeatherOverlaySize);
   render();
   restoreStoredHandle();
 })();
