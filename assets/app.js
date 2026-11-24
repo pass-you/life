@@ -1361,17 +1361,11 @@
     const recorded = recordedDaysInYear(year);
     let yearIncome = 0;
     let yearExpense = 0;
-    let financeRows = '';
 
     for (let m = 1; m <= 12; m += 1) {
       const mNode = monthNode(year, m);
-      const income = monthIncomeCents(mNode);
-      const expense = monthExpenseCents(mNode);
-      yearIncome += income;
-      yearExpense += expense;
-      financeRows += '<tr><th scope="row"><a href="#/' + year + '/' + m + '">' + m +
-        ' 月</a></th><td>' + formatCents(expense) + '</td><td>' +
-        formatCents(income) + '</td></tr>';
+      yearIncome += monthIncomeCents(mNode);
+      yearExpense += monthExpenseCents(mNode);
     }
     const yearNet = yearIncome - yearExpense;
 
@@ -1396,6 +1390,10 @@
       '<p class="sub">' + (leap ? '闰年' : '平年') + ' · ' + (leap ? 366 : 365) +
       ' 天 · 已记录 ' + recorded + ' 天</p></div>' +
       '<div class="chapter-actions">' +
+      '<button type="button" class="expense-entry' +
+      (yearIncome > 0 || yearExpense > 0 ? ' has-expenses' : '') +
+      '" data-year-finance aria-haspopup="dialog" title="年度收支 · 净收入 ' + formatCents(yearNet) +
+      '" aria-label="年度收支，净收入 ' + formatCents(yearNet) + '">¥</button>' +
       '<button type="button" class="btn" data-review aria-expanded="false" aria-controls="review-slot"' +
       (prevYear < MIN_YEAR ? ' disabled' : '') + '>回顾上一年</button>' +
       '<div class="stepper">' +
@@ -1409,18 +1407,6 @@
       '<div id="review-slot" class="review-slot"></div>' +
       '<section class="card"><div class="card-head"><h2>年度计划</h2></div>' +
       '<div class="md-field"><div class="vditor-host" id="year-md-editor"></div></div></section>' +
-      '<section class="card finance-card">' +
-      '<div class="card-head"><h2>年度收支</h2></div>' +
-      '<div class="finance-summary">' +
-      '<div class="finance-stat"><span>总收入</span><strong>' + formatCents(yearIncome) + '</strong></div>' +
-      '<div class="finance-stat"><span>总支出</span><strong>' + formatCents(yearExpense) + '</strong></div>' +
-      '<div class="finance-stat"><span>净收入</span><strong class="' +
-      (yearNet < 0 ? 'is-negative' : '') + '">' + formatCents(yearNet) + '</strong></div>' +
-      '</div>' +
-      '<div class="finance-table-wrap"><table class="finance-table">' +
-      '<thead><tr><th>月份</th><th>支出</th><th>收入</th></tr></thead>' +
-      '<tbody>' + financeRows + '</tbody></table></div>' +
-      '</section>' +
       '<div class="section-head"><h2>选择月份</h2><p>点击月份，制定月计划并进入每日记录</p></div>' +
       '<div class="month-grid">' + months + '</div>' +
       '</section>';
@@ -1431,38 +1417,184 @@
       yearNode(year, true).plan = value;
     }, 260, '这一年想完成什么？想成为怎样的人？写下几件最重要的事。');
 
+    wireYearFinanceEntry(year);
     wireReview('year', year);
   }
 
-  function wireMonthFinance(year, month) {
-    const input = app.querySelector('#month-income');
-    const expenseEl = app.querySelector('#month-expense');
-    const netEl = app.querySelector('#month-net');
-    if (!input || !expenseEl || !netEl) return;
+  function wireMonthFinanceEntry(year, month) {
+    const button = app.querySelector('[data-month-finance]');
+    if (!button) return;
+    button.addEventListener('click', function () {
+      openMonthFinanceModal(year, month);
+    });
+  }
 
-    function update() {
-      const node = monthNode(year, month);
-      const expense = monthExpenseCents(node);
-      const income = monthIncomeCents(node);
-      const net = income - expense;
-      expenseEl.textContent = formatCents(expense);
-      netEl.textContent = formatCents(net);
-      netEl.classList.toggle('is-negative', net < 0);
+  function openMonthFinanceModal(year, month) {
+    if (document.querySelector('.expense-modal')) return;
+    const node = monthNode(year, month);
+    const income = monthIncomeCents(node);
+    const expense = monthExpenseCents(node);
+    const net = income - expense;
+    let days = '';
+    for (let d = 1; d <= daysInMonth(year, month); d += 1) {
+      const cents = dayExpenseCents(node && node.days ? node.days[String(d)] : null);
+      if (cents > 0) {
+        days += '<span class="finance-day"><span>' + d + ' 日</span><strong>' +
+          formatCents(cents) + '</strong></span>';
+      }
+    }
+
+    const overlay = document.createElement('div');
+    overlay.className = 'expense-modal';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-labelledby', 'finance-title');
+    overlay.innerHTML =
+      '<div class="expense-sheet finance-detail">' +
+      '<div class="expense-head"><div><p class="eyebrow">月度收支</p>' +
+      '<h2 id="finance-title">' + year + ' 年 ' + month + ' 月</h2>' +
+      '<p class="sub">每日支出与本月净收入</p></div>' +
+      '<button type="button" class="expense-close" aria-label="关闭月度收支">×</button></div>' +
+      '<div class="finance-summary">' +
+      '<label class="finance-income"><span>本月收入</span><span class="finance-input">' +
+      '<span aria-hidden="true">¥</span><input id="finance-month-income" type="number" min="0" ' +
+      'step="0.01" inputmode="decimal" value="' + (income ? (income / 100).toFixed(2) : '') +
+      '" aria-label="本月收入"></span></label>' +
+      '<div class="finance-stat"><span>本月支出</span><strong id="finance-month-expense">' +
+      formatCents(expense) + '</strong></div>' +
+      '<div class="finance-stat"><span>净收入</span><strong id="finance-month-net" class="' +
+      (net < 0 ? 'is-negative' : '') + '">' + formatCents(net) + '</strong></div></div>' +
+      '<div class="finance-days"><span class="finance-days-label">每日支出</span>' +
+      (days || '<span class="finance-empty">本月暂无支出</span>') + '</div></div>';
+
+    document.body.appendChild(overlay);
+    document.body.classList.add('modal-open');
+
+    const input = overlay.querySelector('#finance-month-income');
+    const expenseEl = overlay.querySelector('#finance-month-expense');
+    const netEl = overlay.querySelector('#finance-month-net');
+    const closeButton = overlay.querySelector('.expense-close');
+
+    function close() {
+      if (!overlay.isConnected) return;
+      overlay.remove();
+      document.body.classList.remove('modal-open');
+      document.removeEventListener('keydown', onKey);
+      window.removeEventListener('hashchange', close);
+      const current = monthNode(year, month);
+      const currentExpense = monthExpenseCents(current);
+      const currentIncome = monthIncomeCents(current);
+      const currentNet = currentIncome - currentExpense;
+      const button = app.querySelector('[data-month-finance]');
+      if (button) {
+        button.classList.toggle('has-expenses', currentIncome > 0 || currentExpense > 0);
+        button.title = '本月收支 · 净收入 ' + formatCents(currentNet);
+        button.setAttribute('aria-label', '本月收支，净收入 ' + formatCents(currentNet));
+        button.focus();
+      }
+    }
+
+    function onKey(event) {
+      if (event.key === 'Escape') { event.preventDefault(); close(); }
     }
 
     input.addEventListener('input', function () {
-      const node = monthNode(year, month, true);
-      node.income = Math.max(0, amountToCents(input.value));
+      const current = monthNode(year, month, true);
+      current.income = Math.max(0, amountToCents(input.value));
       markDirty();
-      update();
+      const currentExpense = monthExpenseCents(current);
+      const currentNet = current.income - currentExpense;
+      expenseEl.textContent = formatCents(currentExpense);
+      netEl.textContent = formatCents(currentNet);
+      netEl.classList.toggle('is-negative', currentNet < 0);
     });
-
     input.addEventListener('blur', function () {
-      const node = monthNode(year, month, true);
-      input.value = node.income ? (node.income / 100).toFixed(2) : '';
+      const current = monthNode(year, month, true);
+      input.value = current.income ? (current.income / 100).toFixed(2) : '';
     });
+    closeButton.addEventListener('click', close);
+    overlay.addEventListener('click', function (event) {
+      if (event.target === overlay) close();
+    });
+    document.addEventListener('keydown', onKey);
+    window.addEventListener('hashchange', close);
+    input.focus();
+  }
 
-    update();
+  function wireYearFinanceEntry(year) {
+    const button = app.querySelector('[data-year-finance]');
+    if (!button) return;
+    button.addEventListener('click', function () {
+      openYearFinanceModal(year);
+    });
+  }
+
+  function openYearFinanceModal(year) {
+    if (document.querySelector('.expense-modal')) return;
+    let income = 0;
+    let expense = 0;
+    let rows = '';
+    for (let m = 1; m <= 12; m += 1) {
+      const mNode = monthNode(year, m);
+      const monthIncome = monthIncomeCents(mNode);
+      const monthExpense = monthExpenseCents(mNode);
+      income += monthIncome;
+      expense += monthExpense;
+      rows += '<tr><th scope="row">' + m + ' 月</th><td>' +
+        formatCents(monthExpense) + '</td><td>' + formatCents(monthIncome) + '</td></tr>';
+    }
+    const net = income - expense;
+
+    const overlay = document.createElement('div');
+    overlay.className = 'expense-modal';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-labelledby', 'finance-title');
+    overlay.innerHTML =
+      '<div class="expense-sheet finance-detail">' +
+      '<div class="expense-head"><div><p class="eyebrow">年度收支</p>' +
+      '<h2 id="finance-title">' + year + ' 年</h2>' +
+      '<p class="sub">每月支出与收入汇总</p></div>' +
+      '<button type="button" class="expense-close" aria-label="关闭年度收支">×</button></div>' +
+      '<div class="finance-summary">' +
+      '<div class="finance-stat"><span>总收入</span><strong>' + formatCents(income) + '</strong></div>' +
+      '<div class="finance-stat"><span>总支出</span><strong>' + formatCents(expense) + '</strong></div>' +
+      '<div class="finance-stat"><span>净收入</span><strong class="' +
+      (net < 0 ? 'is-negative' : '') + '">' + formatCents(net) + '</strong></div></div>' +
+      '<div class="finance-table-wrap"><table class="finance-table">' +
+      '<thead><tr><th>月份</th><th>支出</th><th>收入</th></tr></thead>' +
+      '<tbody>' + rows + '</tbody></table></div></div>';
+
+    document.body.appendChild(overlay);
+    document.body.classList.add('modal-open');
+    const closeButton = overlay.querySelector('.expense-close');
+
+    function close() {
+      if (!overlay.isConnected) return;
+      overlay.remove();
+      document.body.classList.remove('modal-open');
+      document.removeEventListener('keydown', onKey);
+      window.removeEventListener('hashchange', close);
+      const button = app.querySelector('[data-year-finance]');
+      if (button) {
+        button.classList.toggle('has-expenses', income > 0 || expense > 0);
+        button.title = '年度收支 · 净收入 ' + formatCents(net);
+        button.setAttribute('aria-label', '年度收支，净收入 ' + formatCents(net));
+        button.focus();
+      }
+    }
+
+    function onKey(event) {
+      if (event.key === 'Escape') { event.preventDefault(); close(); }
+    }
+
+    closeButton.addEventListener('click', close);
+    overlay.addEventListener('click', function (event) {
+      if (event.target === overlay) close();
+    });
+    document.addEventListener('keydown', onKey);
+    window.addEventListener('hashchange', close);
+    closeButton.focus();
   }
 
   function renderMonth(year, month) {
@@ -1482,15 +1614,6 @@
     const monthIncome = monthIncomeCents(mNode);
     const monthExpense = monthExpenseCents(mNode);
     const monthNet = monthIncome - monthExpense;
-
-    let financeDays = '';
-    for (let d = 1; d <= total; d += 1) {
-      const cents = dayExpenseCents(mNode && mNode.days ? mNode.days[String(d)] : null);
-      if (cents > 0) {
-        financeDays += '<a class="finance-day" href="#/' + year + '/' + month + '/' + d + '">' +
-          '<span>' + d + ' 日</span><strong>' + formatCents(cents) + '</strong></a>';
-      }
-    }
 
     let cells = '';
     for (let i = 0; i < offset; i += 1) {
@@ -1533,6 +1656,10 @@
       '<h1 class="display">' + month + '<span class="unit">月</span></h1>' +
       '<p class="sub">' + total + ' 天 · 已记录 ' + recorded + ' 天</p></div>' +
       '<div class="chapter-actions">' +
+      '<button type="button" class="expense-entry' +
+      (monthIncome > 0 || monthExpense > 0 ? ' has-expenses' : '') +
+      '" data-month-finance aria-haspopup="dialog" title="本月收支 · 净收入 ' + formatCents(monthNet) +
+      '" aria-label="本月收支，净收入 ' + formatCents(monthNet) + '">¥</button>' +
       '<button type="button" class="btn" data-review aria-expanded="false" aria-controls="review-slot"' +
       (prev ? '' : ' disabled') + '>回顾上个月</button>' +
       '<div class="stepper">' +
@@ -1546,21 +1673,6 @@
       '<div id="review-slot" class="review-slot"></div>' +
       '<section class="card"><div class="card-head"><h2>月计划</h2></div>' +
       '<div class="md-field"><div class="vditor-host" id="month-md-editor"></div></div></section>' +
-      '<section class="card finance-card">' +
-      '<div class="card-head"><h2>本月收支</h2></div>' +
-      '<div class="finance-summary">' +
-      '<label class="finance-income"><span>本月收入</span>' +
-      '<span class="finance-input"><span aria-hidden="true">¥</span>' +
-      '<input id="month-income" type="number" min="0" step="0.01" inputmode="decimal" value="' +
-      (monthIncome ? (monthIncome / 100).toFixed(2) : '') + '" aria-label="本月收入"></span></label>' +
-      '<div class="finance-stat"><span>本月支出</span><strong id="month-expense">' +
-      formatCents(monthExpense) + '</strong></div>' +
-      '<div class="finance-stat"><span>净收入</span><strong id="month-net" class="' +
-      (monthNet < 0 ? 'is-negative' : '') + '">' + formatCents(monthNet) + '</strong></div>' +
-      '</div>' +
-      '<div class="finance-days"><span class="finance-days-label">每日支出</span>' +
-      (financeDays || '<span class="finance-empty">本月暂无支出</span>') +
-      '</div></section>' +
       '<div class="section-head"><h2>选择日期</h2><p>点击某一天，记录今天的生活与明日计划</p></div>' +
       '<div class="calendar"><div class="weekdays">' +
       WEEKDAYS.map(function (w) { return '<span>' + w + '</span>'; }).join('') +
@@ -1573,7 +1685,7 @@
       monthNode(year, month, true).plan = value;
     }, 240, '这个月的重点是什么？想在哪些事情上保持节奏？');
 
-    wireMonthFinance(year, month);
+    wireMonthFinanceEntry(year, month);
     wireReview('month', year, month);
   }
 
