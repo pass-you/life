@@ -105,63 +105,6 @@
   }
 
   let stormTimer = 0;
-  let audioContext = null;
-
-  function primeThunderAudio() {
-    try {
-      const Ctor = window.AudioContext || window.webkitAudioContext;
-      if (!Ctor) return;
-      if (!audioContext) audioContext = new Ctor();
-      if (audioContext.state === 'suspended') {
-        audioContext.resume().catch(function () {});
-      }
-    } catch (err) {
-      /* 音频不可用时只保留闪电 */
-    }
-  }
-
-  function rumbleLayer(ctx, start, duration, frequency, volume) {
-    const length = Math.floor(ctx.sampleRate * duration);
-    const buffer = ctx.createBuffer(1, length, ctx.sampleRate);
-    const data = buffer.getChannelData(0);
-    let last = 0;
-    for (let i = 0; i < length; i += 1) {
-      const white = Math.random() * 2 - 1;
-      last = (last + 0.02 * white) / 1.02;
-      data[i] = last * 3.2 * Math.pow(1 - i / length, 1.5);
-    }
-    const source = ctx.createBufferSource();
-    source.buffer = buffer;
-    const filter = ctx.createBiquadFilter();
-    filter.type = 'lowpass';
-    filter.frequency.value = frequency;
-    const gain = ctx.createGain();
-    gain.gain.setValueAtTime(0.0001, start);
-    gain.gain.exponentialRampToValueAtTime(volume, start + 0.12);
-    gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
-    source.connect(filter);
-    filter.connect(gain);
-    gain.connect(ctx.destination);
-    source.start(start);
-    source.stop(start + duration);
-  }
-
-  function playThunder() {
-    if (!audioContext) return;
-    const ctx = audioContext;
-    const startSound = function () {
-      try {
-        const now = ctx.currentTime;
-        rumbleLayer(ctx, now, 0.22, 700, 0.07);
-        rumbleLayer(ctx, now, 2.6, 160, 0.16);
-        rumbleLayer(ctx, now + 0.35, 3.2, 90, 0.1);
-      } catch (err) {
-        /* 忽略音频异常 */
-      }
-    };
-    if (ctx.state === 'running') startSound();
-    else ctx.resume().then(startSound).catch(function () {});
-  }
 
   function stopStormEffects() {
     clearTimeout(stormTimer);
@@ -177,9 +120,33 @@
       if (!overlay || overlay.hidden || overlay.dataset.weather !== 'storm') return;
       overlay.classList.add('is-striking');
       window.setTimeout(function () { overlay.classList.remove('is-striking'); }, 900);
-      playThunder();
       scheduleStormStrike(false);
-    }, first ? 2500 + Math.random() * 2000 : 5000 + Math.random() * 4000);
+    }, first ? 4000 + Math.random() * 3000 : 10000 + Math.random() * 8000);
+  }
+
+  function sceneSnowFeatures() {
+    const flake = '<svg viewBox="0 0 64 64" aria-hidden="true">' +
+      '<g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">' +
+      '<path d="M32 4v56M8.2 18l47.6 28M8.2 46l47.6-28"/>' +
+      '<path d="M32 12l-4-4M32 12l4-4M32 52l-4 4M32 52l4 4"/>' +
+      '<path d="M10.3 19.2l-1-5M10.3 19.2l-5-1M53.7 44.8l1 5M53.7 44.8l5 1' +
+      'M53.7 19.2l1-5M53.7 19.2l5-1M10.3 44.8l-1 5M10.3 44.8l-5 1"/>' +
+      '<circle cx="32" cy="32" r="2.2"/></g></svg>';
+
+    let out = '<div class="scene-snow-features">';
+    for (let i = 0; i < 2; i += 1) {
+      const size = 14 + Math.random() * 8;
+      const x = 12 + Math.random() * 76;
+      const delay = -(Math.random() * 26).toFixed(1);
+      const duration = 20 + Math.random() * 8;
+      out += '<i class="snow-feature" style="--x:' + x.toFixed(1) + '%;' +
+        '--size:' + size.toFixed(1) + 'px;' +
+        '--delay:' + delay + 's;' +
+        '--dur:' + duration.toFixed(1) + 's;' +
+        '--sway:' + (duration * 0.3).toFixed(1) + 's;' +
+        '--spin:' + (16 + Math.random() * 10).toFixed(1) + 's">' + flake + '</i>';
+    }
+    return out + '</div>';
   }
 
   function weatherSceneMarkup(item) {
@@ -216,7 +183,7 @@
         '<path d="M22 4 10 31h8l-3 22 13-27h-7l1-22"/></svg>' +
         '<div class="scene-flash"></div>';
     } else if (key === 'snow') {
-      html += sceneClouds(2) + '<div class="scene-snow">' + sceneParticles(160, 'snow') + '</div>';
+      html += sceneClouds(2) + '<div class="scene-snow">' + sceneParticles(100, 'snow') + sceneSnowFeatures() + '</div>';
     } else if (key === 'fog') {
       html += sceneClouds(1) +
         '<div class="scene-fog"><span></span><span></span><span></span></div>';
@@ -268,7 +235,6 @@
     scene.innerHTML = weatherSceneMarkup(item);
     updateWeatherOverlaySize();
     if (item.icon === 'storm') {
-      primeThunderAudio();
       scheduleStormStrike(true);
     }
   }
