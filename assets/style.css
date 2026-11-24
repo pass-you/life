@@ -1075,89 +1075,126 @@ main,
 }
 
 .scene-cloud {
+  --cloud-light: rgba(255, 255, 255, 0.97);
+  --cloud-mid: rgba(236, 244, 251, 0.6);
+  --cloud-dark: rgba(165, 185, 205, 0.22);
   position: absolute;
-  width: 9em;
-  height: 2.6em;
-  border-radius: 2.6em;
-  font-size: 14px;
-  background-image:
-    radial-gradient(60% 90% at 28% 15%, rgba(255, 255, 255, 0.9), transparent 62%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(239, 245, 250, 0.42));
-  background-size: 180% 100%, 100% 100%;
-  background-position: 0% 0, 0 0;
-  box-shadow: 0 1.2em 2.4em rgba(80, 105, 130, 0.05);
-  filter: blur(0.6px);
-  animation:
-    cloudDrift 44s ease-in-out infinite alternate,
-    cloudShade 16s ease-in-out infinite alternate;
+  width: 220px;
+  height: 90px;
+  opacity: 0.85;
+  animation: cloudDrift 44s ease-in-out infinite alternate;
 }
 
-.scene-cloud::before,
-.scene-cloud::after {
-  content: "";
+.scene-cloud .puff {
   position: absolute;
   border-radius: 50%;
-  background: inherit;
+  filter: blur(2.4px);
+  background: radial-gradient(ellipse at 50% 42%,
+    var(--cloud-light) 0%,
+    var(--cloud-mid) 52%,
+    transparent 74%);
 }
 
-.scene-cloud::before {
-  width: 3.2em;
-  height: 3.2em;
-  left: 1.1em;
-  top: -1.7em;
+.scene-cloud .p1 {
+  left: 0;
+  top: 34%;
+  width: 58%;
+  height: 58%;
 }
 
-.scene-cloud::after {
-  width: 2.3em;
-  height: 2.3em;
-  right: 1.2em;
-  top: -1.1em;
+.scene-cloud .p2 {
+  left: 20%;
+  top: 8%;
+  width: 48%;
+  height: 80%;
+}
+
+.scene-cloud .p3 {
+  left: 48%;
+  top: 16%;
+  width: 46%;
+  height: 70%;
+}
+
+.scene-cloud .p4 {
+  left: 32%;
+  top: 44%;
+  width: 60%;
+  height: 52%;
+}
+
+.scene-cloud .shade {
+  position: absolute;
+  left: 10%;
+  right: 6%;
+  bottom: 2%;
+  height: 30%;
+  border-radius: 50%;
+  background: radial-gradient(ellipse, var(--cloud-dark), transparent 70%);
+  filter: blur(5px);
+}
+
+.scene-cloud .sheen {
+  --sheen-min: 0.25;
+  --sheen-max: 0.7;
+  position: absolute;
+  inset: -12%;
+  border-radius: 50%;
+  background: radial-gradient(55% 50% at 32% 30%, rgba(255, 255, 255, 0.42), transparent 66%);
+  filter: blur(5px);
+  opacity: 0.45;
+  pointer-events: none;
+  animation: cloudShade 18s ease-in-out infinite alternate;
 }
 
 .scene-cloud.c1 {
-  top: 5%;
-  left: 3%;
-  font-size: 16px;
-  opacity: 0.8;
+  top: 2%;
+  left: 2%;
+  opacity: 0.9;
 }
 
 .scene-cloud.c2 {
   top: 30%;
-  left: 36%;
-  font-size: 13px;
-  opacity: 0.55;
-  animation-duration: 56s, 18s;
+  left: 38%;
+  width: 170px;
+  height: 72px;
+  opacity: 0.62;
+  animation-duration: 58s;
   animation-delay: -8s;
 }
 
 .scene-cloud.c3 {
-  top: 48%;
-  right: 4%;
-  font-size: 18px;
-  opacity: 0.45;
-  animation-duration: 38s, 14s;
+  top: 50%;
+  right: 2%;
+  width: 260px;
+  height: 100px;
+  opacity: 0.5;
+  animation-duration: 40s;
   animation-delay: -4s;
 }
 
 .weather-overlay[data-weather="rain"] .scene-cloud,
 .weather-overlay[data-weather="heavyRain"] .scene-cloud {
-  background-image:
-    radial-gradient(60% 90% at 28% 15%, rgba(255, 255, 255, 0.82), transparent 62%),
-    linear-gradient(180deg, rgba(236, 243, 248, 0.88), rgba(172, 192, 210, 0.38));
+  --cloud-light: rgba(250, 253, 255, 0.95);
+  --cloud-mid: rgba(205, 220, 232, 0.62);
+  --cloud-dark: rgba(120, 145, 168, 0.3);
 }
 
 .weather-overlay[data-weather="snow"] .scene-cloud {
-  background-image:
-    radial-gradient(60% 90% at 28% 15%, rgba(255, 255, 255, 0.86), transparent 62%),
-    linear-gradient(180deg, rgba(248, 252, 255, 0.9), rgba(200, 218, 235, 0.4));
+  --cloud-light: rgba(255, 255, 255, 0.97);
+  --cloud-mid: rgba(215, 230, 242, 0.6);
+  --cloud-dark: rgba(150, 175, 195, 0.26);
 }
 
 .weather-overlay[data-weather="storm"] .scene-cloud {
-  background-image:
-    radial-gradient(60% 90% at 28% 15%, rgba(190, 204, 220, 0.26), transparent 62%),
-    linear-gradient(180deg, rgba(88, 100, 116, 0.34), rgba(120, 134, 150, 0.12));
-  box-shadow: none;
-  filter: blur(0.9px);
+  --cloud-light: rgba(160, 172, 188, 0.55);
+  --cloud-mid: rgba(108, 120, 136, 0.4);
+  --cloud-dark: rgba(50, 60, 72, 0.35);
+}
+
+.weather-overlay[data-weather="storm"] .scene-cloud .sheen {
+  --sheen-min: 0.06;
+  --sheen-max: 0.2;
 }
 
 @keyframes cloudDrift {
@@ -1166,8 +1203,8 @@ main,
 }
 
 @keyframes cloudShade {
-  from { background-position: 0% 0, 0 0; }
-  to { background-position: 100% 0, 0 0; }
+  0% { opacity: var(--sheen-min); transform: translateX(-6%); }
+  100% { opacity: var(--sheen-max); transform: translateX(6%); }
 }
 
 .scene-rain,
@@ -1305,41 +1342,52 @@ main,
 
 .scene-lightning {
   position: absolute;
-  left: 47%;
-  top: 28%;
-  width: 38px;
-  height: 58px;
+  left: 46%;
+  top: 26%;
+  width: 46px;
+  height: 70px;
   fill: none;
-  stroke: rgba(255, 238, 190, 0.85);
-  stroke-width: 1.2;
+  stroke: rgba(255, 242, 200, 0.95);
+  stroke-width: 1.3;
   stroke-linecap: round;
   stroke-linejoin: round;
-  filter: drop-shadow(0 0 3px rgba(255, 222, 150, 0.5));
+  filter: drop-shadow(0 0 4px rgba(255, 222, 150, 0.6));
   opacity: 0;
-  animation: boltFlash 8s ease-in-out infinite;
+  transform-origin: center;
 }
 
 .scene-flash {
   position: absolute;
   inset: 0;
-  background: rgba(255, 245, 215, 0.3);
+  background: rgba(255, 246, 220, 0.35);
   opacity: 0;
-  animation: skyFlash 8s ease-in-out infinite;
   pointer-events: none;
 }
 
-@keyframes boltFlash {
-  0%, 91%, 100% { opacity: 0; }
-  92%, 94% { opacity: 0.9; }
-  93% { opacity: 0.25; }
+.weather-overlay.is-striking .scene-lightning {
+  animation: boltStrike 0.8s ease-out;
 }
 
-@keyframes skyFlash {
-  0%, 90%, 100% { opacity: 0; }
-  92% { opacity: 0.3; }
-  93% { opacity: 0; }
-  94% { opacity: 0.2; }
-  95% { opacity: 0; }
+.weather-overlay.is-striking .scene-flash {
+  animation: flashStrike 0.8s ease-out;
+}
+
+@keyframes boltStrike {
+  0% { opacity: 0; }
+  6% { opacity: 1; }
+  14% { opacity: 0.2; }
+  28% { opacity: 0.9; }
+  45% { opacity: 0.1; }
+  100% { opacity: 0; }
+}
+
+@keyframes flashStrike {
+  0% { opacity: 0; }
+  5% { opacity: 0.38; }
+  12% { opacity: 0; }
+  24% { opacity: 0.25; }
+  34% { opacity: 0; }
+  100% { opacity: 0; }
 }
 
 .scene-fog {

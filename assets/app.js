@@ -85,7 +85,10 @@
   function sceneClouds(count) {
     let out = '<div class="scene-clouds">';
     for (let i = 1; i <= count; i += 1) {
-      out += '<span class="scene-cloud c' + i + '"></span>';
+      out += '<div class="scene-cloud c' + i + '">' +
+        '<i class="puff p1"></i><i class="puff p2"></i>' +
+        '<i class="puff p3"></i><i class="puff p4"></i>' +
+        '<i class="shade"></i><i class="sheen"></i></div>';
     }
     return out + '</div>';
   }
@@ -99,6 +102,84 @@
         '--size:' + size.toFixed(1) + 'px"></span>';
     }
     return out + '</div>';
+  }
+
+  let stormTimer = 0;
+  let audioContext = null;
+
+  function primeThunderAudio() {
+    try {
+      const Ctor = window.AudioContext || window.webkitAudioContext;
+      if (!Ctor) return;
+      if (!audioContext) audioContext = new Ctor();
+      if (audioContext.state === 'suspended') {
+        audioContext.resume().catch(function () {});
+      }
+    } catch (err) {
+      /* 音频不可用时只保留闪电 */
+    }
+  }
+
+  function rumbleLayer(ctx, start, duration, frequency, volume) {
+    const length = Math.floor(ctx.sampleRate * duration);
+    const buffer = ctx.createBuffer(1, length, ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    let last = 0;
+    for (let i = 0; i < length; i += 1) {
+      const white = Math.random() * 2 - 1;
+      last = (last + 0.02 * white) / 1.02;
+      data[i] = last * 3.2 * Math.pow(1 - i / length, 1.5);
+    }
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = frequency;
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, start);
+    gain.gain.exponentialRampToValueAtTime(volume, start + 0.12);
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+    source.connect(filter);
+    filter.connect(gain);
+    gain.connect(ctx.destination);
+    source.start(start);
+    source.stop(start + duration);
+  }
+
+  function playThunder() {
+    if (!audioContext) return;
+    const ctx = audioContext;
+    const startSound = function () {
+      try {
+        const now = ctx.currentTime;
+        rumbleLayer(ctx, now, 0.22, 700, 0.07);
+        rumbleLayer(ctx, now, 2.6, 160, 0.16);
+        rumbleLayer(ctx, now + 0.35, 3.2, 90, 0.1);
+      } catch (err) {
+        /* 忽略音频异常 */
+      }
+    };
+    if (ctx.state === 'running') startSound();
+    else ctx.resume().then(startSound).catch(function () {});
+  }
+
+  function stopStormEffects() {
+    clearTimeout(stormTimer);
+    stormTimer = 0;
+    const overlay = document.getElementById('weather-overlay');
+    if (overlay) overlay.classList.remove('is-striking');
+  }
+
+  function scheduleStormStrike(first) {
+    clearTimeout(stormTimer);
+    stormTimer = setTimeout(function () {
+      const overlay = document.getElementById('weather-overlay');
+      if (!overlay || overlay.hidden || overlay.dataset.weather !== 'storm') return;
+      overlay.classList.add('is-striking');
+      window.setTimeout(function () { overlay.classList.remove('is-striking'); }, 900);
+      playThunder();
+      scheduleStormStrike(false);
+    }, first ? 2500 + Math.random() * 2000 : 5000 + Math.random() * 4000);
   }
 
   function weatherSceneMarkup(item) {
@@ -128,9 +209,9 @@
     } else if (key === 'storm') {
       html += sceneClouds(3) +
         '<div class="scene-rain">' +
-        '<div class="rain-far">' + sceneParticles(55, 'farRain') + '</div>' +
-        '<div class="rain-near">' + sceneParticles(35, 'nearRain') + '</div>' +
-        '</div>' + sceneSplashes(18, true) +
+        '<div class="rain-far">' + sceneParticles(110, 'farRain') + '</div>' +
+        '<div class="rain-near">' + sceneParticles(70, 'nearRain') + '</div>' +
+        '</div>' + sceneSplashes(32, true) +
         '<svg class="scene-lightning" viewBox="0 0 40 60" aria-hidden="true">' +
         '<path d="M22 4 10 31h8l-3 22 13-27h-7l1-22"/></svg>' +
         '<div class="scene-flash"></div>';
@@ -164,6 +245,7 @@
   }
 
   function hideWeatherOverlay() {
+    stopStormEffects();
     const overlay = document.getElementById('weather-overlay');
     if (!overlay) return;
     overlay.hidden = true;
@@ -175,6 +257,7 @@
   function renderWeatherScene(label) {
     const scene = document.getElementById('weather-overlay');
     if (!scene) return;
+    stopStormEffects();
     const item = weatherByLabel(label);
     if (!item) {
       hideWeatherOverlay();
@@ -184,6 +267,10 @@
     scene.dataset.weather = item.icon;
     scene.innerHTML = weatherSceneMarkup(item);
     updateWeatherOverlaySize();
+    if (item.icon === 'storm') {
+      primeThunderAudio();
+      scheduleStormStrike(true);
+    }
   }
 
   const app = document.getElementById('app');
