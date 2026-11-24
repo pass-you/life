@@ -1138,7 +1138,7 @@
     return '<aside class="review" aria-label="' + prevDay.y + ' 年 ' + prevDay.m + ' 月 ' +
       prevDay.d + ' 日记录">' +
       '<div class="review-head"><h3>' + prevDay.y + ' 年 ' + prevDay.m + ' 月 ' +
-      prevDay.d + ' 日 · 前一天</h3>' +
+      prevDay.d + ' 日 · 昨天</h3>' +
       '<a class="review-link" href="#/' + prevDay.y + '/' + prevDay.m + '/' + prevDay.d +
       '">前往这一天</a></div>' +
       blocks + '</aside>';
@@ -1406,14 +1406,14 @@
       '<p class="sub">星期' + weekdayName(year, month, day) + (isToday ? ' · 今天' : '') + '</p></div>' +
       '<div class="chapter-actions">' +
       '<button type="button" class="btn" data-review aria-expanded="false" aria-controls="review-slot"' +
-      (prev ? '' : ' disabled') + '>回顾前一天</button>' +
+      (prev ? '' : ' disabled') + '>回顾昨天</button>' +
       '<div class="stepper">' +
       (prev
-        ? '<a class="stepper-btn" href="#/' + prev.y + '/' + prev.m + '/' + prev.d + '" aria-label="前一天">‹ 前一天</a>'
-        : '<span class="stepper-btn is-disabled">‹ 前一天</span>') +
+        ? '<a class="stepper-btn" href="#/' + prev.y + '/' + prev.m + '/' + prev.d + '" aria-label="昨天">‹ 昨天</a>'
+        : '<span class="stepper-btn is-disabled">‹ 昨天</span>') +
       (next
-        ? '<a class="stepper-btn" href="#/' + next.y + '/' + next.m + '/' + next.d + '" aria-label="后一天">后一天 ›</a>'
-        : '<span class="stepper-btn is-disabled">后一天 ›</span>') +
+        ? '<a class="stepper-btn" href="#/' + next.y + '/' + next.m + '/' + next.d + '" aria-label="明天">明天 ›</a>'
+        : '<span class="stepper-btn is-disabled">明天 ›</span>') +
       '</div></div></header>' +
       '<div id="review-slot" class="review-slot"></div>' +
       '<div class="day-meta">' +
