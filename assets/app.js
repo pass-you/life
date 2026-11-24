@@ -507,7 +507,7 @@
       '<div id="review-slot" class="review-slot"></div>' +
       '<section class="card"><div class="card-head"><h2>年度计划</h2>' +
       '<span class="save-state" data-save-state aria-live="polite"></span></div>' +
-      '<textarea id="plan-editor" class="plan-input" rows="7" ' +
+      '<textarea id="plan-editor" class="plan-input" rows="7" aria-label="年度计划" ' +
       'placeholder="这一年想完成什么？想成为怎样的人？写下几件最重要的事。"></textarea></section>' +
       '<div class="section-head"><h2>选择月份</h2><p>点击月份，制定月计划并进入每日记录</p></div>' +
       '<div class="month-grid">' + months + '</div>' +
@@ -583,7 +583,7 @@
       '<div id="review-slot" class="review-slot"></div>' +
       '<section class="card"><div class="card-head"><h2>月计划</h2>' +
       '<span class="save-state" data-save-state aria-live="polite"></span></div>' +
-      '<textarea id="plan-editor" class="plan-input" rows="6" ' +
+      '<textarea id="plan-editor" class="plan-input" rows="6" aria-label="月计划" ' +
       'placeholder="这个月的重点是什么？想在哪些事情上保持节奏？"></textarea></section>' +
       '<div class="section-head"><h2>选择日期</h2><p>点击某一天，记录当日工作与明日计划</p></div>' +
       '<div class="calendar"><div class="weekdays">' +
@@ -635,11 +635,11 @@
       '<div class="day-grid">' +
       '<section class="card"><div class="card-head"><h2>今日工作记录</h2>' +
       '<span class="save-state" data-save-state aria-live="polite"></span></div>' +
-      '<textarea id="work-editor" rows="10" placeholder="今天做了什么，进展如何，遇到了什么问题……"></textarea>' +
+      '<textarea id="work-editor" rows="10" aria-label="今日工作记录" placeholder="今天做了什么，进展如何，遇到了什么问题……"></textarea>' +
       '</section>' +
       '<section class="card"><div class="card-head"><h2>明日工作计划</h2>' +
       '<span class="save-state" data-save-state aria-live="polite"></span></div>' +
-      '<textarea id="next-editor" rows="10" placeholder="明天最重要的一件事，以及需要跟进的事……"></textarea>' +
+      '<textarea id="next-editor" rows="10" aria-label="明日工作计划" placeholder="明天最重要的一件事，以及需要跟进的事……"></textarea>' +
       '</section></div>' +
       '</section>';
 
