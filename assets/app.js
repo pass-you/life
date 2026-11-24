@@ -1165,8 +1165,7 @@
       '<textarea id="highlights-editor" rows="4" aria-label="值得记住的小事" ' +
       'placeholder="每行一件，比如早起散步、读完一章书、和朋友吃饭。"></textarea>' +
       '</section>' +
-      '<section class="card"><div class="card-head"><h2>明日计划</h2>' +
-      '<span class="card-hint">简单写就好</span></div>' +
+      '<section class="card"><div class="card-head"><h2>明日计划</h2></div>' +
       '<textarea id="next-editor" rows="4" aria-label="明日计划" ' +
       'placeholder="明天想先做的一两件事……"></textarea>' +
       '</section></div>' +
