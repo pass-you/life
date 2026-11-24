@@ -15,6 +15,32 @@
   ];
   const WEEKDAYS = ['一', '二', '三', '四', '五', '六', '日'];
   const MOODS = ['很好', '不错', '一般', '有点累', '低落'];
+  const WEATHERS = [
+    { label: '晴', icon: 'sun' },
+    { label: '多云', icon: 'partly' },
+    { label: '阴', icon: 'cloud' },
+    { label: '小雨', icon: 'rain' },
+    { label: '大雨', icon: 'heavyRain' },
+    { label: '雷雨', icon: 'storm' },
+    { label: '雪', icon: 'snow' },
+    { label: '雾', icon: 'fog' }
+  ];
+
+  const WEATHER_ICONS = {
+    sun: '<circle cx="12" cy="12" r="3.6"/><path d="M12 2.6v2.2M12 19.2v2.2M2.6 12h2.2M19.2 12h2.2M5.4 5.4l1.6 1.6M17 17l1.6 1.6M18.6 5.4 17 7M7 17l-1.6 1.6"/>',
+    partly: '<circle cx="8.2" cy="8.4" r="2.7"/><path d="M8.2 3.2v1.4M3 8.4h1.4M4.5 4.7l1 1M11.9 4.7l-1 1"/><path d="M9.4 18h8.2a3 3 0 0 0 .4-6 4.4 4.4 0 0 0-8.3-.6 3.3 3.3 0 0 0-.3 6.6Z"/>',
+    cloud: '<path d="M6.4 17.8h10.4a3.6 3.6 0 0 0 .4-7.2 5.2 5.2 0 0 0-9.8-.3 4 4 0 0 0-1 7.5Z"/>',
+    rain: '<path d="M6.4 15.8h10.4a3.6 3.6 0 0 0 .4-7.2 5.2 5.2 0 0 0-9.8-.3 4 4 0 0 0-1 7.5Z"/><path d="M8.6 19v2M12 19v2.6M15.4 19v2"/>',
+    heavyRain: '<path d="M6.4 15.8h10.4a3.6 3.6 0 0 0 .4-7.2 5.2 5.2 0 0 0-9.8-.3 4 4 0 0 0-1 7.5Z"/><path d="M7.6 18.6l-.8 3M11.6 18.6l-.8 3M15.6 18.6l-.8 3M19.2 18.6l-.8 3"/>',
+    storm: '<path d="M6.4 15.4h10.4a3.6 3.6 0 0 0 .4-7.2 5.2 5.2 0 0 0-9.8-.3 4 4 0 0 0-1 7.5Z"/><path d="M12.8 17.2l-2 3.2h2.6l-1.4 2.4"/>',
+    snow: '<path d="M6.4 15.4h10.4a3.6 3.6 0 0 0 .4-7.2 5.2 5.2 0 0 0-9.8-.3 4 4 0 0 0-1 7.5Z"/><path d="M8.6 19.2v2.4M7.5 20.4h2.2M8.6 20.4l-.8-.8M8.6 20.4l.8-.8M12 19.6v2.2M11 20.7h2M12 20.7l-.7-.7M12 20.7l.7-.7M15.4 19.2v2.4M14.3 20.4h2.2M15.4 20.4l-.8-.8M15.4 20.4l.8-.8"/>',
+    fog: '<path d="M6.4 14.4h10.4a3.6 3.6 0 0 0 .4-7.2 5.2 5.2 0 0 0-9.8-.3 4 4 0 0 0-1 7.5Z"/><path d="M5 17.4h14M7 20.4h10"/>'
+  };
+
+  function weatherIcon(name) {
+    return '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">' +
+      (WEATHER_ICONS[name] || WEATHER_ICONS.cloud) + '</svg>';
+  }
 
   const app = document.getElementById('app');
   const crumbsEl = document.getElementById('crumbs');
@@ -128,6 +154,7 @@
       delete node.work;
     }
     if (typeof node.mood !== 'string') node.mood = '';
+    if (typeof node.weather !== 'string') node.weather = '';
     if (typeof node.journal !== 'string') node.journal = '';
     if (typeof node.highlights !== 'string') node.highlights = '';
     if (typeof node.next !== 'string') node.next = '';
@@ -146,7 +173,7 @@
 
   function hasDayContent(node) {
     if (!node) return false;
-    return ['mood', 'journal', 'highlights', 'next'].some(function (field) {
+    return ['mood', 'weather', 'journal', 'highlights', 'next'].some(function (field) {
       return !!(node[field] || '').trim();
     });
   }
@@ -737,13 +764,18 @@
     }
     const node = dayNode(prevDay.y, prevDay.m, prevDay.d);
     const mood = node ? (node.mood || '').trim() : '';
+    const weather = node ? (node.weather || '').trim() : '';
     const journal = node ? (node.journal || '').trim() : '';
     const highlights = node ? (node.highlights || '').trim() : '';
     const plan = node ? (node.next || '').trim() : '';
     let blocks = '';
-    if (mood) {
-      blocks += '<div class="review-block"><h4>心情</h4><p class="review-body">' +
-        esc(mood) + '</p></div>';
+    const status = [
+      mood ? '心情：' + mood : '',
+      weather ? '天气：' + weather : ''
+    ].filter(Boolean).join(' · ');
+    if (status) {
+      blocks += '<div class="review-block"><h4>心情与天气</h4><p class="review-body">' +
+        esc(status) + '</p></div>';
     }
     if (journal) {
       blocks += '<div class="review-block"><h4>今日记录</h4><p class="review-body">' +
@@ -924,11 +956,17 @@
         const journal = (node.journal || '').trim();
         const highlights = (node.highlights || '').trim();
         const mood = (node.mood || '').trim();
+        const weather = (node.weather || '').trim();
         const plan = (node.next || '').trim();
         if (journal) preview = journal;
         else if (highlights) preview = highlights.replace(/\n+/g, ' · ');
-        else if (mood) preview = '心情：' + mood;
-        else if (plan) preview = '明日：' + plan;
+        else {
+          const status = [
+            mood ? '心情：' + mood : '',
+            weather ? '天气：' + weather : ''
+          ].filter(Boolean).join(' · ');
+          preview = status || (plan ? '明日：' + plan : '');
+        }
       }
       preview = preview.replace(/\s+/g, ' ').slice(0, 80);
       const has = hasDayContent(node);
@@ -995,11 +1033,19 @@
     const next = shiftDay(year, month, day, 1);
     const node = dayNode(year, month, day);
     const mood = node ? node.mood : '';
+    const weather = node ? node.weather : '';
 
     const moodButtons = MOODS.map(function (item) {
       const active = mood === item;
       return '<button type="button" class="mood-chip' + (active ? ' is-active' : '') +
         '" data-mood="' + item + '" aria-pressed="' + active + '">' + item + '</button>';
+    }).join('');
+
+    const weatherButtons = WEATHERS.map(function (item) {
+      const active = weather === item.label;
+      return '<button type="button" class="weather-chip' + (active ? ' is-active' : '') +
+        '" data-weather="' + item.label + '" aria-pressed="' + active + '">' +
+        weatherIcon(item.icon) + '<span>' + item.label + '</span></button>';
     }).join('');
 
     app.innerHTML = '<section class="view">' +
@@ -1019,9 +1065,15 @@
         : '<span class="stepper-btn is-disabled">后一天 ›</span>') +
       '</div></div></header>' +
       '<div id="review-slot" class="review-slot"></div>' +
-      '<div class="mood-bar">' +
-      '<span class="mood-label">今天感觉怎么样？</span>' +
+      '<div class="day-meta">' +
+      '<div class="meta-row">' +
+      '<span class="meta-label">今天感觉怎么样？</span>' +
       '<div class="mood-options" role="group" aria-label="今日心情">' + moodButtons + '</div>' +
+      '</div>' +
+      '<div class="meta-row">' +
+      '<span class="meta-label">今天天气</span>' +
+      '<div class="weather-options" role="group" aria-label="今日天气">' + weatherButtons + '</div>' +
+      '</div>' +
       '</div>' +
       '<section class="card journal-card">' +
       '<div class="card-head"><h2>今日记录</h2></div>' +
@@ -1048,6 +1100,21 @@
         current.mood = nextMood;
         Array.prototype.forEach.call(chips, function (chip) {
           const active = chip.dataset.mood === nextMood;
+          chip.classList.toggle('is-active', active);
+          chip.setAttribute('aria-pressed', String(active));
+        });
+        markDirty();
+      });
+    });
+
+    const weatherChips = app.querySelectorAll('.weather-chip');
+    Array.prototype.forEach.call(weatherChips, function (btn) {
+      btn.addEventListener('click', function () {
+        const current = dayNode(year, month, day, true);
+        const nextWeather = current.weather === btn.dataset.weather ? '' : btn.dataset.weather;
+        current.weather = nextWeather;
+        Array.prototype.forEach.call(weatherChips, function (chip) {
+          const active = chip.dataset.weather === nextWeather;
           chip.classList.toggle('is-active', active);
           chip.setAttribute('aria-pressed', String(active));
         });
@@ -1130,7 +1197,7 @@
       '',
       '> 此文件由「人生日历」生成，可直接导入网站恢复记录。',
       '',
-      '- 格式版本：2',
+      '- 格式版本：3',
       '- 导出时间：' + nowStamp(),
       '- 主题色：' + state.color,
       ''
@@ -1168,6 +1235,7 @@
               parts.push('#### 日期 · ' + year + '-' + pad2(month) + '-' + pad2(day) +
                 ' · 星期' + weekdayName(year, month, day), '');
               pushField(parts, '##### 今日心情', dNode.mood);
+              pushField(parts, '##### 今日天气', dNode.weather);
               pushField(parts, '##### 今日记录', dNode.journal);
               pushField(parts, '##### 值得记住的小事', dNode.highlights);
               pushField(parts, '##### 明日计划', dNode.next);
@@ -1226,6 +1294,7 @@
         delete dNode.work;
       }
       if (typeof dNode.mood !== 'string') dNode.mood = '';
+      if (typeof dNode.weather !== 'string') dNode.weather = '';
       if (typeof dNode.journal !== 'string') dNode.journal = '';
       if (typeof dNode.highlights !== 'string') dNode.highlights = '';
       if (typeof dNode.next !== 'string') dNode.next = '';
@@ -1330,7 +1399,7 @@
         return;
       }
 
-      match = /^#####\s*(今日心情|心情|今日记录|今日工作记录|值得记住的小事|三件小事|今日小事|明日计划|明日工作计划)\s*$/.exec(line);
+      match = /^#####\s*(今日心情|心情|今日天气|天气|今日记录|今日工作记录|值得记住的小事|三件小事|今日小事|明日计划|明日工作计划)\s*$/.exec(line);
       if (match) {
         flush();
         if (year !== null && month !== null && day !== null) {
@@ -1344,6 +1413,18 @@
                   .map(unescapeMdLine)[0];
                 const text = (first || '').trim();
                 node.mood = MOODS.indexOf(text) >= 0 ? text : '';
+              }
+            };
+          } else if (label === '今日天气' || label === '天气') {
+            target = {
+              lines: [],
+              apply: function (value) {
+                const first = trimBlankLines(String(value).split('\n'))
+                  .map(unescapeMdLine)[0];
+                const text = (first || '').trim();
+                node.weather = WEATHERS.some(function (item) {
+                  return item.label === text;
+                }) ? text : '';
               }
             };
           } else {

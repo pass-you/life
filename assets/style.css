@@ -885,11 +885,10 @@ textarea:focus {
 
 /* ---------- 日页面 ---------- */
 
-.mood-bar {
+.day-meta {
   display: flex;
-  align-items: center;
-  gap: 14px;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 10px;
   margin-top: 22px;
   padding: 14px 18px;
   border: 1px solid var(--line);
@@ -898,19 +897,28 @@ textarea:focus {
   box-shadow: var(--shadow);
 }
 
-.mood-label {
+.meta-row {
+  display: flex;
+  align-items: center;
+  gap: 8px 14px;
+  flex-wrap: wrap;
+}
+
+.meta-label {
   font-size: 13px;
   color: var(--muted);
   white-space: nowrap;
 }
 
-.mood-options {
+.mood-options,
+.weather-options {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
 }
 
-.mood-chip {
+.mood-chip,
+.weather-chip {
   appearance: none;
   padding: 6px 14px;
   border: 1px solid var(--line);
@@ -923,13 +931,33 @@ textarea:focus {
   transition: color 0.18s ease, border-color 0.18s ease, background 0.18s ease;
 }
 
-.mood-chip:hover {
+.weather-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+}
+
+.weather-chip svg {
+  width: 17px;
+  height: 17px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.mood-chip:hover,
+.weather-chip:hover {
   color: var(--accent-ink);
   border-color: var(--accent-line);
   background: var(--accent-ghost);
 }
 
-.mood-chip.is-active {
+.mood-chip.is-active,
+.weather-chip.is-active {
   color: var(--accent-ink);
   border-color: var(--accent);
   background: var(--accent-soft);
