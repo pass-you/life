@@ -15,6 +15,24 @@
   ];
   const WEEKDAYS = ['一', '二', '三', '四', '五', '六', '日'];
   const MOODS = ['很好', '不错', '一般', '有点累', '低落'];
+  const MOVIES = Array.isArray(window.MOVIE_DATA) ? window.MOVIE_DATA : [];
+  const MOVIE_BY_ID = {};
+  MOVIES.forEach(function (movie) {
+    MOVIE_BY_ID[movie.id] = movie;
+  });
+  const MOVIE_GENRES = ['全部', '剧情', '喜剧', '爱情', '科幻', '动画', '悬疑', '犯罪', '动作',
+    '战争', '奇幻', '冒险', '历史', '音乐', '家庭', '恐怖', '纪录片'];
+  const MOVIE_REGIONS = ['全部', '华语', '美国', '日本', '韩国', '英国', '法国', '意大利', '其他'];
+  const MOVIE_DECADES = [
+    { label: '全部' },
+    { label: '2020 年代', from: 2020, to: 2029 },
+    { label: '2010 年代', from: 2010, to: 2019 },
+    { label: '2000 年代', from: 2000, to: 2009 },
+    { label: '1990 年代', from: 1990, to: 1999 },
+    { label: '1980 年代', from: 1980, to: 1989 },
+    { label: '更早', to: 1979 }
+  ];
+
   const WEATHERS = [
     { label: '晴', icon: 'sun' },
     { label: '多云', icon: 'partly' },
@@ -337,12 +355,12 @@
     const key = String(day);
     if (!Object.prototype.hasOwnProperty.call(mNode.days, key) || !mNode.days[key]) {
       if (!create) return null;
-      mNode.days[key] = { mood: '', weather: '', journal: '', highlights: '', next: '', expenses: [] };
+      mNode.days[key] = { mood: '', weather: '', journal: '', highlights: '', next: '', expenses: [], movies: [] };
     }
     const node = mNode.days[key];
     if (typeof node !== 'object' || Array.isArray(node)) {
       if (!create) return null;
-      mNode.days[key] = { mood: '', weather: '', journal: '', highlights: '', next: '', expenses: [] };
+      mNode.days[key] = { mood: '', weather: '', journal: '', highlights: '', next: '', expenses: [], movies: [] };
       return mNode.days[key];
     }
     // 兼容旧文件：work 字段迁移到 journal。
@@ -366,7 +384,23 @@
     }).filter(function (item) {
       return !!(item.name || item.price);
     });
+    if (!Array.isArray(node.movies)) node.movies = [];
+    node.movies = node.movies.map(normalizeMovie).filter(function (item) {
+      return !!(item.id || item.title);
+    });
     return node;
+  }
+
+  function normalizeMovie(item) {
+    const id = item && typeof item.id === 'string' ? item.id : '';
+    const data = MOVIE_BY_ID[id] || null;
+    if (data) return { id: id, title: data.title, year: data.year, rating: data.rating };
+    return {
+      id: '',
+      title: item && typeof item.title === 'string' ? item.title : '',
+      year: item && /^\d{4}$/.test(item.year || '') ? item.year : '',
+      rating: item && Number.isFinite(item.rating) ? item.rating : 0
+    };
   }
 
   const yearPlanOf = function (year) {
@@ -386,7 +420,7 @@
     })) return true;
     return Array.isArray(node.expenses) && node.expenses.some(function (item) {
       return item && (item.name || item.price);
-    });
+    }) || (Array.isArray(node.movies) && node.movies.length > 0);
   }
 
   function amountToCents(value) {
@@ -414,6 +448,27 @@
       const name = (match[2] || '').trim();
       const price = Math.max(0, Math.round(Number(match[1]) * 100));
       if (name || price) items.push({ name: name, price: price });
+    });
+    return items;
+  }
+
+  function parseMovieLines(value) {
+    const items = [];
+    String(value || '').split('\n').forEach(function (line) {
+      const match = /^\s*-\s*(.+?)(?:\s+·\s+(\d{4}))?(?:\s+·\s+([\d.]+))?\s*$/.exec(line);
+      if (!match) return;
+      const title = match[1].trim();
+      if (!title) return;
+      const year = match[2] || '';
+      const rating = Number(match[3]) || 0;
+      const known = MOVIES.filter(function (movie) {
+        return movie.title === title && (!year || movie.year === year);
+      })[0];
+      if (known) {
+        items.push(normalizeMovie({ id: known.id }));
+      } else {
+        items.push(normalizeMovie({ title: title, year: year, rating: rating }));
+      }
     });
     return items;
   }
@@ -1736,6 +1791,7 @@
     const mood = node ? node.mood : '';
     const weather = node ? node.weather : '';
     const expenseTotal = node ? dayExpenseCents(node) : 0;
+    const movieCount = node && Array.isArray(node.movies) ? node.movies.length : 0;
 
     const moodButtons = MOODS.map(function (item) {
       const active = mood === item;
@@ -1756,6 +1812,13 @@
       '<h1 class="display">' + day + '<span class="unit">日</span></h1>' +
       '<p class="sub">星期' + weekdayName(year, month, day) + (isToday ? ' · 今天' : '') + '</p></div>' +
       '<div class="chapter-actions">' +
+      '<button type="button" class="expense-entry film-entry' + (movieCount ? ' has-movies' : '') +
+      '" data-movies-open aria-haspopup="dialog" title="找电影 ·今日片单 ' + movieCount + ' 部' +
+      '" aria-label="找电影，今日片单 ' + movieCount + ' 部">' +
+      '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">' +
+      '<rect x="3" y="5.5" width="18" height="13" rx="2.4"/>' +
+      '<path d="M7.6 5.5v13M16.4 5.5v13M3.6 9h4M3.6 15h4M16.4 9h4M16.4 15h4"/>' +
+      '</svg></button>' +
       '<button type="button" class="expense-entry' + (expenseTotal > 0 ? ' has-expenses' : '') +
       '" data-expense-open aria-haspopup="dialog" title="记账 · ' + formatCents(expenseTotal) +
       '" aria-label="记账，今日支出 ' + formatCents(expenseTotal) + '">¥</button>' +
@@ -1842,6 +1905,7 @@
 
     wireReview('day', year, month, day);
     wireExpenseEntry(year, month, day);
+    wireMovieEntry(year, month, day);
   }
 
   function wireExpenseEntry(year, month, day) {
@@ -1992,6 +2056,304 @@
     renderRows(0);
   }
 
+  /* ---------------- 找电影 ---------------- */
+
+  function movieRegionMatch(movie, region) {
+    if (region === '全部') return true;
+    const regions = movie.regions || [];
+    if (region === '华语') {
+      return regions.some(function (item) {
+        return item === '中国大陆' || item === '中国香港' || item === '中国台湾';
+      });
+    }
+    if (region === '其他') {
+      const major = ['中国大陆', '中国香港', '中国台湾', '美国', '日本', '韩国', '英国', '法国', '意大利'];
+      return !regions.some(function (item) { return major.indexOf(item) >= 0; });
+    }
+    return regions.indexOf(region) >= 0;
+  }
+
+  function movieDecadeMatch(movie, label) {
+    if (label === '全部') return true;
+    const decade = MOVIE_DECADES.filter(function (item) { return item.label === label; })[0];
+    if (!decade) return true;
+    const year = Number(movie.year) || 0;
+    if (decade.from && year < decade.from) return false;
+    if (decade.to && year > decade.to) return false;
+    return true;
+  }
+
+  function movieSearchText(movie) {
+    return [movie.title, movie.en, movie.year, movie.director].concat(
+      movie.actors || [], movie.genres || [], movie.regions || []
+    ).join(' ').toLowerCase();
+  }
+
+  function movieDoubanUrl(movie) {
+    return movie.id ? 'https://movie.douban.com/subject/' + movie.id + '/' : '';
+  }
+
+  function moviePosterMarkup(movie) {
+    const url = movieDoubanUrl(movie);
+    const label = '《' + movie.title + '》海报';
+    const inner = '<img src="' + esc(movie.poster) + '" alt="' + esc(label) +
+      '" loading="lazy" decoding="async">' +
+      '<span class="movie-score">' + movie.rating.toFixed(1) + '</span>';
+    if (!url) return '<div class="movie-poster is-plain">' + inner + '</div>';
+    return '<a class="movie-poster" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer" tabindex="-1">' +
+      inner + '</a>';
+  }
+
+  function wireMovieEntry(year, month, day) {
+    const button = app.querySelector('[data-movies-open]');
+    if (!button) return;
+    button.addEventListener('click', function () {
+      openMovieModal(year, month, day);
+    });
+  }
+
+  function openMovieModal(year, month, day) {
+    if (document.querySelector('.expense-modal')) return;
+    if (!MOVIES.length) {
+      setNotice('电影资料未能加载', true);
+      return;
+    }
+    const node = dayNode(year, month, day, true);
+    const filters = { genre: '全部', region: '全部', decade: '全部', sort: 'rating', query: '' };
+
+    function pickIds() {
+      return node.movies.map(function (item) { return item.id; }).filter(Boolean);
+    }
+
+    function isPicked(id) {
+      return pickIds().indexOf(id) >= 0;
+    }
+
+    function chipRow(attr, values, active) {
+      return values.map(function (value) {
+        const on = value === active;
+        return '<button type="button" class="filter-chip' + (on ? ' is-active' : '') +
+          '" data-' + attr + '="' + esc(value) + '" aria-pressed="' + on + '">' + esc(value) + '</button>';
+      }).join('');
+    }
+
+    function playlistMarkup() {
+      if (!node.movies.length) {
+        return '<span class="playlist-empty">还没选片 ·点海报下方的「加入今日片单」挑一部。</span>';
+      }
+      return node.movies.map(function (item, index) {
+        return '<span class="playlist-item"><span class="playlist-title">' + esc(item.title) +
+          (item.year ? ' <em>' + esc(item.year) + '</em>' : '') + '</span>' +
+          '<button type="button" class="playlist-remove" data-unpick="' + index +
+          '" aria-label="从今日片单移除《' + esc(item.title) + '》" title="移除">×</button></span>';
+      }).join('');
+    }
+
+    function filteredMovies() {
+      const query = filters.query.trim().toLowerCase();
+      const tokens = query ? query.split(/\s+/) : [];
+      const list = MOVIES.filter(function (movie) {
+        if (filters.genre !== '全部' && (movie.genres || []).indexOf(filters.genre) < 0) return false;
+        if (!movieRegionMatch(movie, filters.region)) return false;
+        if (!movieDecadeMatch(movie, filters.decade)) return false;
+        if (tokens.length) {
+          const haystack = movieSearchText(movie);
+          if (!tokens.every(function (token) { return haystack.indexOf(token) >= 0; })) return false;
+        }
+        return true;
+      });
+      list.sort(function (a, b) {
+        if (filters.sort === 'votes') return b.votes - a.votes;
+        if (filters.sort === 'yearDesc') return (Number(b.year) || 0) - (Number(a.year) || 0);
+        if (filters.sort === 'yearAsc') return (Number(a.year) || 0) - (Number(b.year) || 0);
+        if (b.rating !== a.rating) return b.rating - a.rating;
+        return b.votes - a.votes;
+      });
+      return list;
+    }
+
+    function cardMarkup(movie) {
+      const url = movieDoubanUrl(movie);
+      const picked = isPicked(movie.id);
+      const meta = [movie.year, (movie.regions || []).join(' / ')].filter(Boolean).join(' · ');
+      const title = url
+        ? '<a href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">' + esc(movie.title) + '</a>'
+        : esc(movie.title);
+      return '<article class="movie-card">' + moviePosterMarkup(movie) +
+        '<div class="movie-body"><h3 class="movie-name">' + title + '</h3>' +
+        '<p class="movie-meta">' + esc(meta) + '</p>' +
+        '<p class="movie-genre">' + esc((movie.genres || []).join(' ')) + '</p>' +
+        '<button type="button" class="movie-pick' + (picked ? ' is-picked' : '') +
+        '" data-pick="' + esc(movie.id) + '" aria-pressed="' + picked + '">' +
+        (picked ? '✓ 已在片单' : '＋ 加入今日片单') + '</button></div></article>';
+    }
+
+    const overlay = document.createElement('div');
+    overlay.className = 'expense-modal movie-modal';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-labelledby', 'movie-title');
+    overlay.innerHTML =
+      '<div class="expense-sheet movie-sheet">' +
+      '<div class="movie-head"><div>' +
+      '<p class="eyebrow">找电影</p>' +
+      '<h2 id="movie-title">今天想看点什么？</h2>' +
+      '<p class="sub">' + year + ' 年 ' + month + ' 月 ' + day + ' 日 ·豆瓣电影 Top 250</p>' +
+      '</div><button type="button" class="expense-close movie-close" aria-label="关闭找电影">×</button></div>' +
+      '<div class="movie-scroll">' +
+      '<div class="playlist" id="movie-playlist"><span class="playlist-label">今日片单</span>' +
+      playlistMarkup() + '</div>' +
+      '<div class="movie-toolbar">' +
+      '<label class="movie-search"><svg viewBox="0 0 24 24" aria-hidden="true">' +
+      '<circle cx="11" cy="11" r="6.4"/><path d="m16 16 4 4"/></svg>' +
+      '<input id="movie-search" type="search" placeholder="搜索片名、导演、演员" autocomplete="off" aria-label="搜索电影">' +
+      '</label>' +
+      '<label class="movie-sort"><span>排序</span><select id="movie-sort" aria-label="排序方式">' +
+      '<option value="rating">豆瓣评分</option><option value="votes">评价人数</option>' +
+      '<option value="yearDesc">年份（新→旧）</option><option value="yearAsc">年份（旧→新）</option>' +
+      '</select></label></div>' +
+      '<div class="movie-filters">' +
+      '<div class="filter-row"><span class="filter-label">类型</span><div class="filter-chips">' +
+      chipRow('genre', MOVIE_GENRES, '全部') + '</div></div>' +
+      '<div class="filter-row"><span class="filter-label">地区</span><div class="filter-chips">' +
+      chipRow('region', MOVIE_REGIONS, '全部') + '</div></div>' +
+      '<div class="filter-row"><span class="filter-label">年代</span><div class="filter-chips">' +
+      chipRow('decade', MOVIE_DECADES.map(function (item) { return item.label; }), '全部') +
+      '</div></div></div>' +
+      '<p class="movie-count" id="movie-count"></p>' +
+      '<div class="movie-grid" id="movie-grid"></div>' +
+      '</div></div>';
+    document.body.appendChild(overlay);
+    document.body.classList.add('modal-open');
+
+    const grid = overlay.querySelector('#movie-grid');
+    const countEl = overlay.querySelector('#movie-count');
+    const playlistEl = overlay.querySelector('#movie-playlist');
+    const searchInput = overlay.querySelector('#movie-search');
+    const sortSelect = overlay.querySelector('#movie-sort');
+    const closeButton = overlay.querySelector('.movie-close');
+
+    function renderPlaylist() {
+      playlistEl.innerHTML = '<span class="playlist-label">今日片单</span>' + playlistMarkup();
+    }
+
+    function syncPickButtons() {
+      const ids = pickIds();
+      Array.prototype.forEach.call(grid.querySelectorAll('[data-pick]'), function (button) {
+        const picked = ids.indexOf(button.dataset.pick) >= 0;
+        button.classList.toggle('is-picked', picked);
+        button.setAttribute('aria-pressed', String(picked));
+        button.textContent = picked ? '✓ 已在片单' : '＋ 加入今日片单';
+      });
+    }
+
+    function renderGrid() {
+      const list = filteredMovies();
+      countEl.textContent = '共 ' + list.length + ' 部' +
+        (filters.genre !== '全部' || filters.region !== '全部' || filters.decade !== '全部' || filters.query
+          ? ' · 已筛选' : '');
+      grid.innerHTML = list.length
+        ? list.map(cardMarkup).join('')
+        : '<p class="movie-empty">没有符合条件的电影，换个筛选条件试试。</p>';
+    }
+
+    function refreshEntry() {
+      const entry = app.querySelector('[data-movies-open]');
+      if (!entry) return;
+      const count = node.movies.length;
+      entry.classList.toggle('has-movies', count > 0);
+      entry.title = '找电影 ·今日片单 ' + count + ' 部';
+      entry.setAttribute('aria-label', '找电影，今日片单 ' + count + ' 部');
+    }
+
+    function close() {
+      if (!overlay.isConnected) return;
+      overlay.remove();
+      document.body.classList.remove('modal-open');
+      document.removeEventListener('keydown', onKey);
+      window.removeEventListener('hashchange', close);
+      refreshEntry();
+      const entry = app.querySelector('[data-movies-open]');
+      if (entry) entry.focus();
+    }
+
+    function onKey(event) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        close();
+      }
+    }
+
+    overlay.addEventListener('click', function (event) {
+      if (event.target === overlay) close();
+    });
+    closeButton.addEventListener('click', close);
+
+    overlay.addEventListener('click', function (event) {
+      const chip = event.target.closest('.filter-chip');
+      if (chip) {
+        const type = chip.dataset.genre ? 'genre' : chip.dataset.region ? 'region' : 'decade';
+        filters[type] = chip.textContent;
+        const row = chip.parentNode;
+        Array.prototype.forEach.call(row.children, function (item) {
+          const on = item === chip;
+          item.classList.toggle('is-active', on);
+          item.setAttribute('aria-pressed', String(on));
+        });
+        renderGrid();
+        return;
+      }
+
+      const pick = event.target.closest('[data-pick]');
+      if (pick) {
+        const id = pick.dataset.pick;
+        const movie = MOVIE_BY_ID[id];
+        if (!movie) return;
+        if (isPicked(id)) {
+          node.movies = node.movies.filter(function (item) { return item.id !== id; });
+        } else {
+          node.movies.push(normalizeMovie({ id: id }));
+        }
+        markDirty();
+        renderPlaylist();
+        syncPickButtons();
+        refreshEntry();
+        return;
+      }
+
+      const remove = event.target.closest('[data-unpick]');
+      if (remove) {
+        const index = Number(remove.dataset.unpick);
+        const removed = node.movies[index];
+        node.movies.splice(index, 1);
+        markDirty();
+        renderPlaylist();
+        syncPickButtons();
+        refreshEntry();
+        if (removed) remove.focus();
+      }
+    });
+
+    let searchTimer = 0;
+    searchInput.addEventListener('input', function () {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(function () {
+        filters.query = searchInput.value;
+        renderGrid();
+      }, 120);
+    });
+
+    sortSelect.addEventListener('change', function () {
+      filters.sort = sortSelect.value;
+      renderGrid();
+    });
+
+    document.addEventListener('keydown', onKey);
+    window.addEventListener('hashchange', close);
+    renderGrid();
+    searchInput.focus();
+  }
+
   /* ---------------- Markdown 导入 / 导出 ---------------- */
 
   const MD_MAX_BYTES = 5 * 1024 * 1024;
@@ -2048,7 +2410,7 @@
       '',
       '> 此文件由「人生日历」生成，可直接导入网站恢复记录。',
       '',
-      '- 格式版本：4',
+      '- 格式版本：5',
       '- 导出时间：' + nowStamp(),
       '- 主题色：' + state.color,
       ''
@@ -2097,6 +2459,13 @@
                   (item.name ? ' · ' + item.name : '');
               }).join('\n');
               pushField(parts, '##### 今日支出', expenseLines);
+              const movieLines = (dNode.movies || []).map(function (item) {
+                const bits = [String(item.title || '').replace(/\s+/g, ' ').trim()];
+                if (item.year) bits.push(item.year);
+                if (item.rating) bits.push(item.rating.toFixed(1));
+                return '- ' + bits.join(' · ');
+              }).filter(function (line) { return line !== '- '; }).join('\n');
+              pushField(parts, '##### 今日电影', movieLines);
               pushField(parts, '##### 明日计划', dNode.next);
             });
         }
@@ -2147,7 +2516,7 @@
       const mNode = ensureMonth(y, m);
       const key = String(d);
       if (!mNode.days[key] || typeof mNode.days[key] !== 'object') {
-        mNode.days[key] = { mood: '', weather: '', journal: '', highlights: '', next: '', expenses: [] };
+        mNode.days[key] = { mood: '', weather: '', journal: '', highlights: '', next: '', expenses: [], movies: [] };
       }
       const dNode = mNode.days[key];
       if (typeof dNode.work === 'string') {
@@ -2166,6 +2535,10 @@
           price: item && Number.isFinite(item.price) ? Math.max(0, Math.round(item.price)) : 0
         };
       }).filter(function (item) { return !!(item.name || item.price); });
+      if (!Array.isArray(dNode.movies)) dNode.movies = [];
+      dNode.movies = dNode.movies.map(normalizeMovie).filter(function (item) {
+        return !!(item.id || item.title);
+      });
       return dNode;
     }
 
@@ -2287,7 +2660,7 @@
         return;
       }
 
-      match = /^#####\s*(今日心情|心情|今日天气|天气|今日记录|今日工作记录|值得记住的小事|三件小事|今日小事|今日支出|明日计划|明日工作计划)\s*$/.exec(line);
+      match = /^#####\s*(今日心情|心情|今日天气|天气|今日记录|今日工作记录|值得记住的小事|三件小事|今日小事|今日支出|今日电影|今日片单|观影记录|明日计划|明日工作计划)\s*$/.exec(line);
       if (match) {
         if (year === null || month === null || day === null) {
           if (target) target.lines.push(line);
@@ -2323,6 +2696,11 @@
             target = {
               lines: [],
               apply: function (value) { node.expenses = parseExpenseLines(value); }
+            };
+          } else if (label === '今日电影' || label === '今日片单' || label === '观影记录') {
+            target = {
+              lines: [],
+              apply: function (value) { node.movies = parseMovieLines(value); }
             };
           } else {
             let field = 'next';
