@@ -1,4 +1,4 @@
-/* 电影片库客户端：由本地 serve.py 代理豆瓣电影资料，静态托管时自动退回离线片库。 */
+/* 电影片库客户端：由本地 serve.py 代理豆瓣的列表、详情、海报与条目页。 */
 window.MovieSource = (function () {
   'use strict';
 

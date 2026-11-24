@@ -77,10 +77,11 @@ class Throttle:
 THROTTLE = Throttle(0.35)
 
 
-def http_get(url: str, referer: str, accept: str = "*/*") -> tuple[bytes, str]:
+def http_get(url: str, referer: str, accept: str = "*/*",
+             ua: str | None = None) -> tuple[bytes, str]:
     """带重试的 GET，返回 (body, content_type)。"""
     headers = {
-        "User-Agent": USER_AGENT,
+        "User-Agent": ua or USER_AGENT,
         "Referer": referer,
         "Accept": accept,
         "Accept-Language": "zh-CN,zh;q=0.9",
@@ -403,9 +404,129 @@ def fetch_poster(url: str) -> tuple[bytes, str] | None:
     return None
 
 
+# ---------- 豆瓣条目页（在弹层里内嵌展示） ----------
+
+# PC 版条目页会被 sec.douban.com 拦下，移动版可以直接拿到静态 HTML。
+MOBILE_UA = (
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 "
+    "(KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+)
+MOBILE_REFERER = "https://m.douban.com/"
+PAGE_TTL = 6 * 60 * 60
+PAGE_MAX_BYTES = 4 * 1024 * 1024
+ASSET_MAX_BYTES = 8 * 1024 * 1024
+
+DOUBANIO_HOST_RE = re.compile(r"^(?:[a-z0-9-]+\.)*doubanio\.com$", re.I)
+DOUBANIO_URL_RE = re.compile(
+    r"(?:https?:)?//((?:[a-z0-9-]+\.)*doubanio\.com)(/[^\s\"'<>()\\]*)", re.I)
+CSS_URL_RE = re.compile(r"url\(\s*(['\"]?)([^'\")]+)\1\s*\)", re.I)
+SCRIPT_RE = re.compile(r"<script\b[^>]*>.*?</script>", re.I | re.S)
+EMPTY_SCRIPT_RE = re.compile(r"<script\b[^>]*/>", re.I)
+REFRESH_RE = re.compile(r"<meta[^>]+http-equiv=[\"']?refresh[\"']?[^>]*>", re.I)
+HEAD_RE = re.compile(r"<head[^>]*>", re.I)
+
+
+def asset_url(url: str, origin: str = "") -> str:
+    # 页面里注入了 <base href="https://m.douban.com/…">，相对路径会被解析到豆瓣，
+    # 所以内嵌页里的资源必须写成带本站 origin 的绝对地址。
+    return origin + "/api/movie/asset?u=" + urllib.parse.quote(url, safe="")
+
+
+def asset_allowed(url: str) -> bool:
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme != "https":
+        return False
+    return bool(DOUBANIO_HOST_RE.match(parsed.hostname or ""))
+
+
+def rewrite_douban_page(html: str, base: str, origin: str = "") -> str:
+    """把豆瓣条目页变成可以内嵌的静态页：去脚本、资源走本地代理。"""
+    html = SCRIPT_RE.sub("", html)
+    html = EMPTY_SCRIPT_RE.sub("", html)
+    html = REFRESH_RE.sub("", html)
+
+    def repl(match: re.Match) -> str:
+        url = match.group(0)
+        if url.startswith("//"):
+            url = "https:" + url
+        return asset_url(url, origin)
+
+    html = DOUBANIO_URL_RE.sub(repl, html)
+    # 页面里的脚本已删除，内联事件处理器（例如 ga(...)）只会报错。
+    html = re.sub(r"\son[a-z]+=\"[^\"]*\"", "", html, flags=re.I)
+    html = re.sub(r"\son[a-z]+='[^']*'", "", html, flags=re.I)
+    # 去掉「下载豆瓣 App」横幅，剩下的是条目正文。
+    html = re.sub(r"</head>",
+                  "<style>.subject-banner,.promo_top_banner,.vendor-go-app{"
+                  "display:none !important}</style></head>", html, count=1, flags=re.I)
+    if "<base" not in html.lower():
+        html = HEAD_RE.sub(
+            lambda m: m.group(0) + '<base href="%s">' % base, html, count=1)
+    return html
+
+
+def rewrite_css(css: str, base: str) -> str:
+    def repl(match: re.Match) -> str:
+        raw = match.group(2).strip()
+        if raw.startswith(("data:", "blob:", "#")):
+            return match.group(0)
+        absolute = urllib.parse.urljoin(base, raw)
+        if not asset_allowed(absolute):
+            return match.group(0)
+        return 'url("%s")' % asset_url(absolute)
+
+    return CSS_URL_RE.sub(repl, css)
+
+
+def douban_page(subject_id: str, origin: str = "") -> str:
+    path = cache_path("pages", subject_id)
+    html = ""
+    try:
+        if path.is_file() and time.time() - path.stat().st_mtime <= PAGE_TTL:
+            html = path.read_text("utf-8")
+    except OSError:
+        html = ""
+    base = "https://m.douban.com/movie/subject/%s/" % subject_id
+    if not html:
+        body, content_type = http_get(
+            base, MOBILE_REFERER, accept="text/html,application/xhtml+xml", ua=MOBILE_UA)
+        if "text/html" not in content_type and "text/html" not in body[:200].decode(
+                "utf-8", "replace"):
+            raise ValueError("豆瓣没有返回条目页面")
+        html = body[:PAGE_MAX_BYTES].decode("utf-8", "replace")
+        if len(html) < 3000 or "sec.douban.com" in html:
+            raise ValueError("豆瓣返回了安全校验页，稍后再试")
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(html, "utf-8")
+            os.replace(tmp, path)
+        except OSError:
+            pass
+    # 原始页面进缓存，重写（含本站 origin）每次请求都做，端口变化也不会留下坏链接。
+    return rewrite_douban_page(html, base, origin)
+
+
+def page_error_html(subject_id: str, message: str) -> str:
+    link = "https://movie.douban.com/subject/%s/" % subject_id
+    return (
+        "<!DOCTYPE html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\">"
+        "<title>豆瓣条目加载失败</title><style>"
+        "body{margin:0;padding:34px 22px;background:#fff;color:#333;"
+        "font:14px/1.7 -apple-system,'PingFang SC','Microsoft YaHei',sans-serif;}"
+        "h1{margin:0 0 10px;font-size:16px;font-weight:600;}"
+        "p{margin:0 0 8px;color:#777;}"
+        "a{color:#42bd56;text-decoration:none;}"
+        "</style></head><body><h1>豆瓣条目暂时打不开</h1>"
+        "<p>%s</p><p><a href=\"%s\" target=\"_blank\" rel=\"noopener\">在豆瓣打开这一页 ↗</a></p>"
+        "</body></html>" % (message.replace("<", "&lt;"), link)
+    )
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "LifeCalendar/2.0"
     protocol_version = "HTTP/1.1"
+
 
     def log_message(self, fmt: str, *args) -> None:  # 安静一点，只留错误
         if args and isinstance(args[0], str) and args[0].startswith(("4", "5")):
@@ -460,6 +581,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(200, douban_detail(query), head_only)
             elif action == "poster":
                 self.handle_poster(query, head_only)
+            elif action == "page":
+                self.handle_page(query, head_only)
+            elif action == "asset":
+                self.handle_asset(query, head_only)
             else:
                 self.send_json(404, {"error": "未知接口"}, head_only)
         except ValueError as exc:
@@ -495,6 +620,57 @@ class Handler(BaseHTTPRequestHandler):
         except OSError:
             pass
         self.send_bytes(200, body, content_type, "public, max-age=604800, immutable", head_only)
+
+    def handle_page(self, query: dict[str, list[str]], head_only: bool) -> None:
+        subject_id = (query.get("id") or [""])[0].strip()
+        if not re.fullmatch(r"\d{4,12}", subject_id):
+            self.send_bytes(400, page_error_html("0", "电影 id 不合法").encode("utf-8"),
+                            "text/html; charset=utf-8", "no-store", head_only)
+            return
+        try:
+            origin = "http://" + (self.headers.get("Host") or "127.0.0.1:8765")
+            html = douban_page(subject_id, origin)
+        except urllib.error.HTTPError as exc:
+            html = page_error_html(subject_id, "豆瓣返回 %d。" % exc.code)
+        except Exception as exc:  # noqa: BLE001 页面打不开时给出可点击的兜底
+            html = page_error_html(subject_id, "原因：%s" % exc)
+        self.send_bytes(200, html.encode("utf-8"), "text/html; charset=utf-8",
+                        "no-store", head_only)
+
+    def handle_asset(self, query: dict[str, list[str]], head_only: bool) -> None:
+        url = (query.get("u") or [""])[0]
+        if not asset_allowed(url):
+            self.send_json(400, {"error": "只允许代理豆瓣静态资源"}, head_only)
+            return
+        path = cache_path("assets", url)
+        body: bytes | None = None
+        content_type = mimetypes.guess_type(urllib.parse.urlparse(url).path)[0] or ""
+        try:
+            if path.is_file():
+                body = path.read_bytes()
+            else:
+                fetched, header_type = http_get(
+                    url, MOBILE_REFERER, accept="*/*", ua=MOBILE_UA)
+                if len(fetched) > ASSET_MAX_BYTES:
+                    raise ValueError("资源过大")
+                body = fetched
+                content_type = header_type.split(";")[0].strip() or content_type
+                try:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    tmp = path.with_suffix(".tmp")
+                    tmp.write_bytes(body)
+                    os.replace(tmp, path)
+                except OSError:
+                    pass
+        except Exception as exc:  # noqa: BLE001 单个资源失败不影响整页
+            self.send_json(502, {"error": "资源加载失败：%s" % exc}, head_only)
+            return
+        if "css" in content_type or url.lower().split("?")[0].endswith(".css"):
+            css = rewrite_css(body.decode("utf-8", "replace"), url)
+            body = css.encode("utf-8")
+            content_type = "text/css; charset=utf-8"
+        self.send_bytes(200, body, content_type or "application/octet-stream",
+                        "public, max-age=86400", head_only)
 
     def handle_static(self, path: str, head_only: bool) -> None:
         if path == "/":

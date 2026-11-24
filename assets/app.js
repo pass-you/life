@@ -15,11 +15,6 @@
   ];
   const WEEKDAYS = ['一', '二', '三', '四', '五', '六', '日'];
   const MOODS = ['很好', '不错', '一般', '有点累', '低落'];
-  const MOVIES = Array.isArray(window.MOVIE_DATA) ? window.MOVIE_DATA : [];
-  const MOVIE_BY_ID = {};
-  MOVIES.forEach(function (movie) {
-    MOVIE_BY_ID[movie.id] = movie;
-  });
   const MOVIE_GENRES = ['全部', '喜剧', '爱情', '动作', '科幻', '动画', '悬疑', '惊悚', '恐怖',
     '犯罪', '同性', '音乐', '歌舞', '传记', '历史', '战争', '西部', '奇幻', '冒险', '灾难',
     '武侠', '情色', '剧情'];
@@ -317,7 +312,7 @@
 
   /* ---------------- 数据模型 ---------------- */
 
-  const state = { color: DEFAULT_COLOR, years: {} };
+  const state = { color: DEFAULT_COLOR, years: {}, library: { wish: [], watched: [] } };
 
   function yearNode(year, create) {
     const key = String(year);
@@ -367,12 +362,12 @@
     const key = String(day);
     if (!Object.prototype.hasOwnProperty.call(mNode.days, key) || !mNode.days[key]) {
       if (!create) return null;
-      mNode.days[key] = { mood: '', weather: '', journal: '', highlights: '', next: '', expenses: [], movies: [] };
+      mNode.days[key] = { mood: '', weather: '', journal: '', highlights: '', next: '', expenses: [] };
     }
     const node = mNode.days[key];
     if (typeof node !== 'object' || Array.isArray(node)) {
       if (!create) return null;
-      mNode.days[key] = { mood: '', weather: '', journal: '', highlights: '', next: '', expenses: [], movies: [] };
+      mNode.days[key] = { mood: '', weather: '', journal: '', highlights: '', next: '', expenses: [] };
       return mNode.days[key];
     }
     // 兼容旧文件：work 字段迁移到 journal。
@@ -396,24 +391,64 @@
     }).filter(function (item) {
       return !!(item.name || item.price);
     });
-    if (!Array.isArray(node.movies)) node.movies = [];
-    node.movies = node.movies.map(normalizeMovie).filter(function (item) {
-      return !!(item.id || item.title);
-    });
     return node;
   }
 
-  function normalizeMovie(item) {
-    const rawId = item && typeof item.id === 'string' ? item.id : '';
-    const data = MOVIE_BY_ID[rawId] || null;
-    const title = item && typeof item.title === 'string' && item.title.trim()
-      ? item.title.trim()
-      : (data ? data.title : '');
-    const year = item && /^\d{4}$/.test(item.year || '') ? item.year : (data ? data.year : '');
-    const rating = item && Number.isFinite(item.rating) && item.rating > 0
-      ? item.rating
-      : (data ? data.rating : 0);
-    return { id: rawId || (data ? data.id : ''), title: title, year: year, rating: rating };
+  /* 电影收藏：想看 / 看过，各为一份独立列表，随 MD 一起保存。 */
+
+  const COLLECTIONS = ['wish', 'watched'];
+
+  function collectionList(kind) {
+    if (!state.library || typeof state.library !== 'object') {
+      state.library = { wish: [], watched: [] };
+    }
+    if (!Array.isArray(state.library[kind])) state.library[kind] = [];
+    return state.library[kind];
+  }
+
+  function normalizeCollectionItem(item) {
+    const raw = item && typeof item === 'object' ? item : {};
+    const title = typeof raw.title === 'string' ? raw.title.replace(/\s+/g, ' ').trim() : '';
+    const id = typeof raw.id === 'string' ? raw.id.trim() : '';
+    const year = /^\d{4}$/.test(raw.year || '') ? String(raw.year) : '';
+    const rating = Number.isFinite(raw.rating) && raw.rating > 0
+      ? Math.round(raw.rating * 10) / 10
+      : 0;
+    const cover = typeof raw.cover === 'string' && /^https?:\/\//.test(raw.cover) ? raw.cover : '';
+    const added = /^\d{4}-\d{2}-\d{2}$/.test(raw.added || '') ? raw.added : '';
+    return { id: id, title: title, year: year, rating: rating, cover: cover, added: added };
+  }
+
+  function findInCollection(kind, id) {
+    if (!id) return null;
+    return collectionList(kind).filter(function (item) { return item.id === id; })[0] || null;
+  }
+
+  function removeFromCollection(kind, id) {
+    const list = collectionList(kind);
+    for (let index = list.length - 1; index >= 0; index -= 1) {
+      if (list[index].id === id) list.splice(index, 1);
+    }
+  }
+
+  function addToCollection(kind, item) {
+    const next = normalizeCollectionItem(item);
+    if (!next.title) return false;
+    if (!next.added) next.added = dayStamp();
+    const other = kind === 'wish' ? 'watched' : 'wish';
+    removeFromCollection(kind, next.id);
+    removeFromCollection(other, next.id);
+    collectionList(kind).push(next);
+    return true;
+  }
+
+  function libraryCounts() {
+    return { wish: collectionList('wish').length, watched: collectionList('watched').length };
+  }
+
+  function hasLibraryContent() {
+    const counts = libraryCounts();
+    return counts.wish > 0 || counts.watched > 0;
   }
 
   const yearPlanOf = function (year) {
@@ -433,7 +468,7 @@
     })) return true;
     return Array.isArray(node.expenses) && node.expenses.some(function (item) {
       return item && (item.name || item.price);
-    }) || (Array.isArray(node.movies) && node.movies.length > 0);
+    });
   }
 
   function amountToCents(value) {
@@ -465,36 +500,48 @@
     return items;
   }
 
+  // MD 里的电影行：- 片名 · 年份 · 评分 · 豆瓣 id · 加入日期 · 海报地址
+  // 尾部可选字段从后往前剥离，标题里带「·」也能原样还原。
+  function parseMovieLine(line, fallbackDate) {
+    const text = String(line || '').replace(/^\s*-\s*/, '').replace(/\s+$/, '');
+    if (!text) return null;
+    const parts = text.split(/\s+·\s+/).map(function (part) { return part.trim(); });
+    const item = { title: '', year: '', rating: 0, id: '', cover: '', added: fallbackDate || '' };
+    if (parts.length > 1 && /^https?:\/\/\S+$/.test(parts[parts.length - 1])) item.cover = parts.pop();
+    if (parts.length > 1 && /^\d{4}-\d{2}-\d{2}$/.test(parts[parts.length - 1])) item.added = parts.pop();
+    if (parts.length > 1 && /^\d{5,}$/.test(parts[parts.length - 1])) item.id = parts.pop();
+    if (parts.length > 1 && /^\d+(?:\.\d+)?$/.test(parts[parts.length - 1])) {
+      item.rating = Number(parts.pop()) || 0;
+    }
+    if (parts.length > 1 && /^\d{4}$/.test(parts[parts.length - 1])) item.year = parts.pop();
+    item.title = parts.join(' · ').trim();
+    if (!item.title) return null;
+    return normalizeCollectionItem(item);
+  }
+
   function parseMovieLines(value) {
     const items = [];
     String(value || '').split('\n').forEach(function (line) {
       if (!/^\s*-/.test(line)) return;
-      const parts = line.replace(/^\s*-\s*/, '').split(/\s+·\s+/).map(function (part) {
-        return part.trim();
-      }).filter(function (part, index) {
-        return part !== '' || index > 0;
-      });
-      if (!parts.length || !parts[0]) return;
-      let id = '';
-      let rating = 0;
-      let year = '';
-      if (parts.length > 1 && /^\d{5,}$/.test(parts[parts.length - 1])) id = parts.pop();
-      if (parts.length > 1 && /^\d+(?:\.\d+)?$/.test(parts[parts.length - 1])) {
-        rating = Number(parts.pop()) || 0;
-      }
-      if (parts.length > 1 && /^\d{4}$/.test(parts[parts.length - 1])) year = parts.pop();
-      const title = parts.join(' · ').trim();
-      if (!title) return;
-      const known = id ? MOVIE_BY_ID[id] : MOVIES.filter(function (movie) {
-        return movie.title === title && (!year || movie.year === year);
-      })[0];
-      if (known) {
-        items.push(normalizeMovie({ id: known.id }));
-      } else {
-        items.push(normalizeMovie({ id: id, title: title, year: year, rating: rating }));
-      }
+      const item = parseMovieLine(line, '');
+      if (item) items.push(item);
     });
     return items;
+  }
+
+  // 旧版「今日电影 / 今日片单」章节迁移到「看过的电影」。
+  function migrateDayMovies(list, date) {
+    (list || []).forEach(function (item) {
+      if (!item || !item.title) return;
+      if (!item.added) item.added = date;
+      const exists = collectionList('watched').some(function (entry) {
+        if (item.id) return entry.id === item.id;
+        return !entry.id && entry.title === item.title;
+      });
+      if (exists) return;
+      if (item.id && findInCollection('wish', item.id)) removeFromCollection('wish', item.id);
+      collectionList('watched').push(normalizeCollectionItem(item));
+    });
   }
 
   function dayExpenseCents(node) {
@@ -1815,7 +1862,7 @@
     const mood = node ? node.mood : '';
     const weather = node ? node.weather : '';
     const expenseTotal = node ? dayExpenseCents(node) : 0;
-    const movieCount = node && Array.isArray(node.movies) ? node.movies.length : 0;
+    const movies = libraryCounts();
 
     const moodButtons = MOODS.map(function (item) {
       const active = mood === item;
@@ -1836,9 +1883,11 @@
       '<h1 class="display">' + day + '<span class="unit">日</span></h1>' +
       '<p class="sub">星期' + weekdayName(year, month, day) + (isToday ? ' · 今天' : '') + '</p></div>' +
       '<div class="chapter-actions">' +
-      '<button type="button" class="expense-entry film-entry' + (movieCount ? ' has-movies' : '') +
-      '" data-movies-open aria-haspopup="dialog" title="找电影 ·今日片单 ' + movieCount + ' 部' +
-      '" aria-label="找电影，今日片单 ' + movieCount + ' 部">' +
+      '<button type="button" class="expense-entry film-entry' +
+      (movies.wish || movies.watched ? ' has-movies' : '') +
+      '" data-movies-open aria-haspopup="dialog" title="找电影 · 想看 ' + movies.wish +
+      ' 部 · 看过 ' + movies.watched + ' 部' +
+      '" aria-label="找电影，想看 ' + movies.wish + ' 部，看过 ' + movies.watched + ' 部">' +
       '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">' +
       '<rect x="3" y="5.5" width="18" height="13" rx="2.4"/>' +
       '<path d="M7.6 5.5v13M16.4 5.5v13M3.6 9h4M3.6 15h4M16.4 9h4M16.4 15h4"/>' +
@@ -2082,40 +2131,8 @@
 
   /* ---------------- 找电影 ---------------- */
 
-  function movieRegionMatch(movie, region) {
-    if (region === '全部') return true;
-    const regions = movie.regions || [];
-    if (region === '华语') {
-      return regions.some(function (item) {
-        return item === '中国大陆' || item === '中国香港' || item === '中国台湾';
-      });
-    }
-    if (region === '欧美') {
-      const west = ['美国', '英国', '法国', '德国', '意大利', '西班牙', '加拿大', '澳大利亚',
-        '爱尔兰', '瑞典', '丹麦', '巴西', '俄罗斯'];
-      return regions.some(function (item) { return west.indexOf(item) >= 0; });
-    }
-    return regions.indexOf(region) >= 0;
-  }
-
-  function movieDecadeMatch(movie, label) {
-    if (label === '全部') return true;
-    const decade = MOVIE_DECADES.filter(function (item) { return item.label === label; })[0];
-    if (!decade) return true;
-    const year = Number(movie.year) || 0;
-    if (decade.from && year < decade.from) return false;
-    if (decade.to && year > decade.to) return false;
-    return true;
-  }
-
-  function movieSearchText(movie) {
-    return [movie.title, movie.en, movie.year, movie.director].concat(
-      movie.actors || [], movie.genres || [], movie.regions || []
-    ).join(' ').toLowerCase();
-  }
-
-  function movieDoubanUrl(movie) {
-    return movie.id ? 'https://movie.douban.com/subject/' + movie.id + '/' : '';
+  function movieDoubanUrl(id) {
+    return id ? 'https://movie.douban.com/subject/' + encodeURIComponent(id) + '/' : '';
   }
 
   function wireMovieEntry(year, month, day) {
@@ -2142,12 +2159,31 @@
       note: ''
     };
 
-    function pickIds() {
-      return node.movies.map(function (item) { return item.id; }).filter(Boolean);
+    function watchedIds() {
+      return collectionList('watched').map(function (item) { return item.id; }).filter(Boolean);
     }
 
-    function isPicked(id) {
-      return pickIds().indexOf(id) >= 0;
+    function isIn(kind, id) {
+      return !!findInCollection(kind, id);
+    }
+
+    // 想看 / 看过 互斥切换：再点一次同一状态即取消收藏。
+    function toggleCollection(kind, movie) {
+      const id = movie && movie.id;
+      if (!id) return false;
+      if (isIn(kind, id)) {
+        removeFromCollection(kind, id);
+        return false;
+      }
+      addToCollection(kind, {
+        id: id,
+        title: movie.title || '',
+        year: movie.year || '',
+        rating: movie.rating || 0,
+        cover: movie.cover || '',
+        added: dayStamp()
+      });
+      return true;
     }
 
     function chipRow(attr, values, active) {
@@ -2158,63 +2194,20 @@
       }).join('');
     }
 
-    function playlistMarkup() {
-      if (!node.movies.length) {
-        return '<span class="playlist-empty">还没选片 ·点海报下方的「加入今日片单」挑一部。</span>';
-      }
-      return node.movies.map(function (item, index) {
-        return '<span class="playlist-item"><span class="playlist-title">' + esc(item.title) +
-          (item.year ? ' <em>' + esc(item.year) + '</em>' : '') + '</span>' +
-          '<button type="button" class="playlist-remove" data-unpick="' + index +
-          '" aria-label="从今日片单移除《' + esc(item.title) + '》" title="移除">×</button></span>';
-      }).join('');
+    function posterOf(movie) {
+      if (!movie) return '';
+      if (movie.poster) return movie.poster;
+      return movie.cover ? MovieSource.poster(movie.cover) : '';
     }
 
-    function offlineList() {
-      const query = filters.query.trim().toLowerCase();
-      const tokens = query ? query.split(/\s+/) : [];
-      const list = MOVIES.filter(function (movie) {
-        if (filters.genre !== '全部' && (movie.genres || []).indexOf(filters.genre) < 0) return false;
-        if (!movieRegionMatch(movie, filters.region)) return false;
-        if (!movieDecadeMatch(movie, filters.decade)) return false;
-        if (tokens.length) {
-          const haystack = movieSearchText(movie);
-          if (!tokens.every(function (token) { return haystack.indexOf(token) >= 0; })) return false;
-        }
-        return true;
-      });
-      list.sort(function (a, b) {
-        if (filters.sort === 'R') return b.votes - a.votes;
-        if (filters.sort === 'T') return (Number(b.year) || 0) - (Number(a.year) || 0);
-        if (b.rating !== a.rating) return b.rating - a.rating;
-        return b.votes - a.votes;
-      });
-      return list;
-    }
-
-    function offlinePage(start) {
-      const page = offlineList().slice(start, start + 40);
-      return {
-        items: page.map(function (movie) {
-          return {
-            id: movie.id,
-            title: movie.title,
-            rating: movie.rating,
-            year: movie.year,
-            poster: movie.poster,
-            cover: '',
-            directors: movie.director ? [movie.director] : [],
-            casts: movie.actors || [],
-            genres: movie.genres || [],
-            regions: movie.regions || []
-          };
-        }),
-        hasMore: start + 40 < offlineList().length
-      };
+    function doubanHref(movie) {
+      return movie && movie.id ? movieDoubanUrl(movie.id) : '';
     }
 
     function requestPage() {
-      if (feed.online !== true) return Promise.resolve(offlinePage(feed.start));
+      if (feed.online !== true) {
+        return Promise.reject(new Error('电影片库需要运行 python serve.py 后访问'));
+      }
       const keyword = filters.query.trim();
       const decade = MOVIE_DECADES.filter(function (item) { return item.label === filters.decade; })[0] || {};
       if (keyword) {
@@ -2238,91 +2231,97 @@
       });
     }
 
+    function markButton(kind, id, label) {
+      const on = isIn(kind, id);
+      return '<button type="button" class="movie-mark' + (on ? ' is-on' : '') +
+        '" data-mark="' + kind + '" data-id="' + esc(id) + '" aria-pressed="' + on + '">' +
+        (on ? '✓' : '＋') + ' ' + label + '</button>';
+    }
+
+    // 列表接口没有年份，收藏后再补一次豆瓣条目信息，让清单能显示年份与评分。
+    function enrichLibraryItem(id) {
+      if (feed.online !== true || !id) return;
+      const item = findInCollection('wish', id) || findInCollection('watched', id);
+      if (!item || (item.year && item.rating)) return;
+      MovieSource.detail(id).then(function (data) {
+        if (!data) return;
+        const target = findInCollection('wish', id) || findInCollection('watched', id);
+        if (!target) return;
+        let changed = false;
+        if (!target.year && data.year) { target.year = data.year; changed = true; }
+        if (!target.rating && data.rating) { target.rating = data.rating; changed = true; }
+        if (!target.title && data.title) { target.title = data.title; changed = true; }
+        if (!changed) return;
+        markDirty();
+        if (libraryKind === 'wish' || libraryKind === 'watched') renderLibraryView();
+      }).catch(function () {});
+    }
+
     function cardMarkup(movie) {
       const id = movie.id;
-      const picked = isPicked(id);
-      const posterSrc = movie.poster || (movie.cover ? MovieSource.poster(movie.cover) : '');
+      const posterSrc = posterOf(movie);
       const line = movie.directors && movie.directors.length
         ? '导演 ' + movie.directors.slice(0, 2).join(' / ')
         : [movie.year, (movie.regions || []).join(' / ')].filter(Boolean).join(' · ');
       return '<article class="movie-card">' +
         '<button type="button" class="movie-poster' + (posterSrc ? '' : ' is-plain') +
-        '" data-detail="' + esc(id) + '" aria-label="查看《' + esc(movie.title) + '》详情">' +
+        '" data-open="' + esc(id) + '" aria-label="查看《' + esc(movie.title) + '》的豆瓣页面">' +
         (posterSrc
           ? '<img src="' + esc(posterSrc) + '" alt="" loading="lazy" decoding="async">'
           : '<span class="movie-poster-fallback">' + esc(movie.title.slice(0, 4)) + '</span>') +
         (movie.rating ? '<span class="movie-score">' + movie.rating.toFixed(1) + '</span>' : '') +
         '</button>' +
         '<div class="movie-body"><h3 class="movie-name">' +
-        '<button type="button" class="movie-name-btn" data-detail="' + esc(id) + '">' +
+        '<button type="button" class="movie-name-btn" data-open="' + esc(id) + '">' +
         esc(movie.title) + '</button></h3>' +
         (line ? '<p class="movie-meta">' + esc(line) + '</p>' : '') +
-        '<button type="button" class="movie-pick' + (picked ? ' is-picked' : '') +
-        '" data-pick="' + esc(id) + '" aria-pressed="' + picked + '">' +
-        (picked ? '✓ 已在片单' : '＋ 加入今日片单') + '</button></div></article>';
+        '<div class="movie-marks">' + markButton('wish', id, '想看') +
+        markButton('watched', id, '看过') + '</div></div></article>';
     }
 
-    function detailMarkup(data) {
-      const picked = isPicked(data.id);
-      const meta = [data.year, data.region, data.duration].filter(Boolean).join(' · ');
-      const genres = (data.genres || []).join(' · ');
-      const directors = (data.directors || []).join(' / ');
-      const actors = (data.actors || []).slice(0, 8).join(' / ');
-      return '<div class="detail-card">' +
-        (data.poster
-          ? '<figure class="detail-poster"><img src="' + esc(data.poster) + '" alt="《' +
-            esc(data.title) + '》海报"></figure>'
-          : '') +
-        '<div class="detail-info">' +
-        '<h3 class="detail-name">' + esc(data.title) +
-        (data.year ? ' <em>' + esc(data.year) + '</em>' : '') + '</h3>' +
-        '<p class="detail-rate">' +
-        (data.rating
-          ? '<span class="detail-score">' + data.rating.toFixed(1) + '</span><span class="detail-score-label">豆瓣评分</span>'
-          : '<span class="detail-score is-none">暂无评分</span>') +
-        (meta ? '<span class="detail-meta">' + esc(meta) + '</span>' : '') + '</p>' +
-        (genres ? '<p class="detail-genres">' + esc(genres) + '</p>' : '') +
-        (directors ? '<p class="detail-row"><span>导演</span>' + esc(directors) + '</p>' : '') +
-        (actors ? '<p class="detail-row"><span>主演</span>' + esc(actors) + '</p>' : '') +
-        (data.summary ? '<p class="detail-summary">' + esc(data.summary) + '</p>' : '') +
-        '<div class="detail-actions">' +
-        '<button type="button" class="movie-pick detail-pick' + (picked ? ' is-picked' : '') +
-        '" data-pick="' + esc(data.id) + '" aria-pressed="' + picked + '">' +
-        (picked ? '✓ 已在片单' : '＋ 加入今日片单') + '</button>' +
-        (data.url ? '<a class="detail-link" href="' + esc(data.url) +
-          '" target="_blank" rel="noopener noreferrer">在豆瓣查看 ↗</a>' : '') +
-        '</div></div></div>';
-    }
-
-    function openDetail(id, fallback) {
-      const local = MOVIE_BY_ID[id];
-      if (local) {
-        detailBody.innerHTML = detailMarkup({
-          id: local.id,
-          title: local.title,
-          year: local.year,
-          rating: local.rating,
-          genres: local.genres,
-          region: (local.regions || []).join(' / '),
-          duration: '',
-          directors: local.director ? [local.director] : [],
-          actors: local.actors || [],
-          summary: local.quote || '',
-          url: movieDoubanUrl(local),
-          poster: local.poster
-        });
-      } else if (feed.online !== true) {
-        detailBody.innerHTML = '<p class="movie-empty">离线片库没有这部影片的详情。运行 <code>python serve.py</code> 后可查看豆瓣条目。</p>';
-      } else {
-        detailBody.innerHTML = '<p class="movie-empty">正在加载豆瓣条目…</p>';
-        MovieSource.detail(id).then(function (data) {
-          if (fallback && fallback.cover) data.poster = MovieSource.poster(fallback.cover);
-          detailBody.innerHTML = detailMarkup(data);
-        }).catch(function (error) {
-          detailBody.innerHTML = '<p class="movie-empty">条目加载失败：' +
-            esc(error && error.message ? error.message : '网络异常') + '</p>';
-        });
+    function sizeFrame() {
+      const frame = detailBody.querySelector('.douban-frame');
+      if (!frame) return;
+      try {
+        const doc = frame.contentDocument;
+        if (!doc) return;
+        const height = Math.max(
+          doc.documentElement ? doc.documentElement.scrollHeight : 0,
+          doc.body ? doc.body.scrollHeight : 0
+        );
+        if (height > 200) frame.style.height = Math.min(6000, height) + 'px';
+      } catch (err) {
+        /* 跨域时无法测量，保持默认高度 */
       }
+    }
+
+    // 豆瓣条目页在本地服务里代理后内嵌展示，资源与链接都走同源代理。
+    function openDetail(id) {
+      if (!id) return;
+      detailBody.innerHTML = '<iframe class="douban-frame" title="豆瓣电影条目" ' +
+        'src="api/movie/page?id=' + encodeURIComponent(id) + '" ' +
+        'referrerpolicy="no-referrer" loading="eager"></iframe>';
+      const frame = detailBody.querySelector('.douban-frame');
+      frame.addEventListener('load', function () {
+        sizeFrame();
+        setTimeout(sizeFrame, 400);
+        setTimeout(sizeFrame, 1200);
+        try {
+          const doc = frame.contentDocument;
+          if (!doc) return;
+          // 豆瓣页面里的链接统一新窗口打开，避免 iframe 内被豆瓣安全页拦住。
+          doc.addEventListener('click', function (event) {
+            const link = event.target.closest('a[href]');
+            if (!link) return;
+            const url = link.href;
+            if (!/^https?:/i.test(url)) return;
+            event.preventDefault();
+            window.open(url, '_blank', 'noopener,noreferrer');
+          }, true);
+        } catch (err) {
+          /* 同源失败时保留默认行为 */
+        }
+      });
       detail.hidden = false;
       const back = overlay.querySelector('.detail-back');
       if (back) back.focus();
@@ -2345,9 +2344,14 @@
       '<h2 id="movie-title">今天想看点什么？</h2>' +
       '<p class="sub">' + year + ' 年 ' + month + ' 月 ' + day + ' 日 ·<span id="movie-source-note">豆瓣电影片库</span></p>' +
       '</div><button type="button" class="expense-close movie-close" aria-label="关闭找电影">×</button></div>' +
+      '<div class="movie-collections">' +
+      '<button type="button" class="collection-entry" data-lib="wish" aria-pressed="false">' +
+      '想看的电影 <b data-lib-count="wish">0</b></button>' +
+      '<button type="button" class="collection-entry" data-lib="watched" aria-pressed="false">' +
+      '看过的电影 <b data-lib-count="watched">0</b></button>' +
+      '</div>' +
       '<div class="movie-scroll" id="movie-scroll">' +
-      '<div class="playlist" id="movie-playlist"><span class="playlist-label">今日片单</span>' +
-      playlistMarkup() + '</div>' +
+      '<div class="movie-find" id="movie-find">' +
       '<div class="movie-toolbar">' +
       '<label class="movie-search"><svg viewBox="0 0 24 24" aria-hidden="true">' +
       '<circle cx="11" cy="11" r="6.4"/><path d="m16 16 4 4"/></svg>' +
@@ -2370,6 +2374,8 @@
       '<div class="movie-grid" id="movie-grid"></div>' +
       '<div class="movie-foot"><button type="button" class="movie-more" id="movie-more" hidden>加载更多</button></div>' +
       '</div>' +
+      '<div class="movie-library" id="movie-library" hidden></div>' +
+      '</div>' +
       '<div class="movie-detail" id="movie-detail" hidden>' +
       '<div class="detail-bar"><button type="button" class="detail-back" data-detail-close>← 返回片库</button></div>' +
       '<div class="detail-body" id="movie-detail-body"></div>' +
@@ -2382,25 +2388,92 @@
     const grid = overlay.querySelector('#movie-grid');
     const countEl = overlay.querySelector('#movie-count');
     const moreButton = overlay.querySelector('#movie-more');
-    const playlistEl = overlay.querySelector('#movie-playlist');
+    const findEl = overlay.querySelector('#movie-find');
+    const libraryEl = overlay.querySelector('#movie-library');
     const sourceNote = overlay.querySelector('#movie-source-note');
     const searchInput = overlay.querySelector('#movie-search');
     const sortSelect = overlay.querySelector('#movie-sort');
     const closeButton = overlay.querySelector('.movie-close');
     const detail = overlay.querySelector('#movie-detail');
     const detailBody = overlay.querySelector('#movie-detail-body');
+    let libraryKind = null;
+    renderLibraryButtons();
 
-    function renderPlaylist() {
-      playlistEl.innerHTML = '<span class="playlist-label">今日片单</span>' + playlistMarkup();
+    function renderLibraryButtons() {
+      const counts = libraryCounts();
+      Array.prototype.forEach.call(overlay.querySelectorAll('[data-lib]'), function (button) {
+        const kind = button.dataset.lib;
+        const count = counts[kind] || 0;
+        const on = libraryKind === kind;
+        button.classList.toggle('is-active', on);
+        button.setAttribute('aria-pressed', String(on));
+        const badge = button.querySelector('[data-lib-count]');
+        if (badge) badge.textContent = String(count);
+      });
     }
 
-    function syncPickButtons() {
-      const ids = pickIds();
-      Array.prototype.forEach.call(overlay.querySelectorAll('[data-pick]'), function (button) {
-        const picked = ids.indexOf(button.dataset.pick) >= 0;
-        button.classList.toggle('is-picked', picked);
-        button.setAttribute('aria-pressed', String(picked));
-        button.textContent = picked ? '✓ 已在片单' : '＋ 加入今日片单';
+    function libraryCard(item) {
+      const posterSrc = posterOf(item);
+      return '<article class="movie-card">' +
+        '<button type="button" class="movie-poster' + (posterSrc ? '' : ' is-plain') +
+        '" data-open="' + esc(item.id) + '" aria-label="查看《' + esc(item.title) + '》的豆瓣页面">' +
+        (posterSrc
+          ? '<img src="' + esc(posterSrc) + '" alt="" loading="lazy" decoding="async">'
+          : '<span class="movie-poster-fallback">' + esc(item.title.slice(0, 4)) + '</span>') +
+        (item.rating ? '<span class="movie-score">' + item.rating.toFixed(1) + '</span>' : '') +
+        '</button>' +
+        '<div class="movie-body"><h3 class="movie-name">' +
+        '<button type="button" class="movie-name-btn" data-open="' + esc(item.id) + '">' +
+        esc(item.title) + '</button></h3>' +
+        '<p class="movie-meta">' + esc([item.year, item.added ? item.added + ' 收藏' : '']
+          .filter(Boolean).join(' · ')) + '</p>' +
+        '<div class="movie-marks">' + markButton('wish', item.id, '想看') +
+        markButton('watched', item.id, '看过') + '</div>' +
+        '<button type="button" class="movie-remove" data-remove="' + esc(item.id) +
+        '" aria-label="从' + (libraryKind === 'wish' ? '想看的电影' : '看过的电影') +
+        '移除《' + esc(item.title) + '》">移除</button></div></article>';
+    }
+
+    function renderLibraryView() {
+      if (!libraryKind) return;
+      const list = collectionList(libraryKind).slice();
+      const isWish = libraryKind === 'wish';
+      if (!list.length) {
+        libraryEl.innerHTML = '<p class="movie-empty">' + (isWish
+          ? '还没有想看的电影 · 点上方的「想看」把片子存进来。'
+          : '还没有看过的电影 · 点上方的「看过」记录一下。') + '</p>';
+        return;
+      }
+      list.sort(function (a, b) { return (b.added || '').localeCompare(a.added || ''); });
+      libraryEl.innerHTML = '<p class="movie-count">' + (isWish ? '想看的电影' : '看过的电影') +
+        ' <b>' + list.length + '</b> 部</p>' +
+        '<div class="movie-grid">' + list.map(libraryCard).join('') + '</div>';
+    }
+
+    function openLibrary(kind) {
+      libraryKind = kind;
+      findEl.hidden = true;
+      libraryEl.hidden = false;
+      renderLibraryButtons();
+      renderLibraryView();
+      scrollEl.scrollTop = 0;
+    }
+
+    function closeLibrary() {
+      libraryKind = null;
+      libraryEl.hidden = true;
+      findEl.hidden = false;
+      renderLibraryButtons();
+      scrollEl.scrollTop = 0;
+    }
+
+    function syncMarks() {
+      Array.prototype.forEach.call(overlay.querySelectorAll('[data-mark]'), function (button) {
+        const on = isIn(button.dataset.mark, button.dataset.id);
+        button.classList.toggle('is-on', on);
+        button.setAttribute('aria-pressed', String(on));
+        const label = button.dataset.mark === 'wish' ? '想看' : '看过';
+        button.textContent = (on ? '✓ ' : '＋ ') + label;
       });
     }
 
@@ -2413,13 +2486,14 @@
       } else if (feed.online === null) {
         countEl.textContent = '正在连接豆瓣片库…';
       } else if (feed.online !== true) {
-        countEl.innerHTML = '离线片库 <b>' + feed.items.length + '</b>部 ·运行 <code>python serve.py</code> 接入豆瓣全库';
+        countEl.innerHTML = '电影片库需要本地服务：在此目录运行 <code>python serve.py</code>，' +
+          '再打开 <code>http://127.0.0.1:8765/</code>。';
       } else if (!feed.items.length) {
         countEl.textContent = feed.note || '没有符合条件的电影，换个筛选条件或关键词试试。';
       } else {
         const keyword = filters.query.trim();
         countEl.innerHTML = '已加载 <b>' + feed.items.length + '</b>部 ·豆瓣电影片库' +
-          (keyword ? ' ·关键词「' + esc(keyword) + '」' : '') +
+          (keyword ? ' ·关键词「' + esc(keyword) + '」' : ' ·已看过的不再推荐') +
           (feed.loading ? ' ·加载中…' : '');
         if (feed.note) {
           countEl.innerHTML += '<span class="movie-note">' + esc(feed.note) + '</span>';
@@ -2428,9 +2502,7 @@
       moreButton.hidden = !feed.hasMore || !!feed.error;
       moreButton.disabled = feed.loading;
       moreButton.textContent = feed.loading ? '加载中…' : '加载更多';
-      sourceNote.textContent = feed.online
-        ? '豆瓣电影片库 ·类型 / 地区 / 年代均为全库筛选'
-        : '离线片库 ·运行 python serve.py 接入豆瓣全库';
+      sourceNote.textContent = '豆瓣电影片库 · 点击海报查看豆瓣条目';
     }
 
     function skeleton() {
@@ -2443,24 +2515,41 @@
       });
     }
 
+    // 推荐流里跳过「看过」的电影；整页都被过滤掉时继续取下一页。
+    function fetchChunk(token, remaining) {
+      return requestPage().then(function (page) {
+        if (token !== feed.token) return { items: [], hasMore: false };
+        const items = Array.isArray(page.items) ? page.items : [];
+        items.forEach(function (item) {
+          if (item && item.id) feed.known[item.id] = item;
+        });
+        const skip = filters.query.trim() ? [] : watchedIds();
+        const visible = items.filter(function (item) {
+          return item && item.id && skip.indexOf(item.id) < 0;
+        });
+        feed.start += items.length;
+        feed.hasMore = !!page.hasMore && items.length > 0;
+        feed.note = page.note || '';
+        if (!visible.length && feed.hasMore && remaining > 0) {
+          return fetchChunk(token, remaining - 1);
+        }
+        return { items: visible, hasMore: feed.hasMore };
+      });
+    }
+
     function loadMore() {
       if (feed.loading || !feed.hasMore || feed.error) return;
       const token = feed.token;
       feed.loading = true;
       renderStatus();
-      requestPage().then(function (page) {
+      fetchChunk(token, 4).then(function (result) {
         if (token !== feed.token) return;
         feed.loading = false;
-        const items = Array.isArray(page.items) ? page.items : [];
-        items.forEach(function (item) {
-          if (item && item.id) feed.known[item.id] = item;
-        });
-        feed.items = feed.items.concat(items);
-        feed.start += items.length;
-        feed.note = page.note || '';
-        feed.hasMore = !!page.hasMore && items.length > 0;
+        feed.items = feed.items.concat(result.items);
         clearSkeleton();
-        if (items.length) grid.insertAdjacentHTML('beforeend', items.map(cardMarkup).join(''));
+        if (result.items.length) {
+          grid.insertAdjacentHTML('beforeend', result.items.map(cardMarkup).join(''));
+        }
         renderStatus();
       }).catch(function (error) {
         if (token !== feed.token) return;
@@ -2487,24 +2576,11 @@
     function refreshEntry() {
       const entry = app.querySelector('[data-movies-open]');
       if (!entry) return;
-      const count = node.movies.length;
-      entry.classList.toggle('has-movies', count > 0);
-      entry.title = '找电影 ·今日片单 ' + count + ' 部';
-      entry.setAttribute('aria-label', '找电影，今日片单 ' + count + ' 部');
-    }
-
-    function stabilizeYear(id) {
-      if (feed.online !== true) return;
-      const entry = node.movies.filter(function (item) { return item.id === id; })[0];
-      if (!entry || entry.year) return;
-      MovieSource.detail(id).then(function (data) {
-        const target = node.movies.filter(function (item) { return item.id === id; })[0];
-        if (!target || !data || !data.year) return;
-        target.year = data.year;
-        if (!target.rating && data.rating) target.rating = data.rating;
-        markDirty();
-        renderPlaylist();
-      }).catch(function () {});
+      const counts = libraryCounts();
+      entry.classList.toggle('has-movies', counts.wish + counts.watched > 0);
+      entry.title = '找电影 · 想看 ' + counts.wish + ' 部 · 看过 ' + counts.watched + ' 部';
+      entry.setAttribute('aria-label', '找电影，想看 ' + counts.wish + ' 部，看过 ' +
+        counts.watched + ' 部');
     }
 
     let observer = null;
@@ -2559,45 +2635,51 @@
         return;
       }
 
-      const pick = event.target.closest('[data-pick]');
-      if (pick) {
-        const id = pick.dataset.pick;
-        const item = feed.known[id] || MOVIE_BY_ID[id];
-        if (!item) return;
-        if (isPicked(id)) {
-          node.movies = node.movies.filter(function (entry) { return entry.id !== id; });
-        } else {
-          node.movies.push(normalizeMovie({
-            id: id,
-            title: item.title,
-            year: item.year || '',
-            rating: item.rating || 0
-          }));
+      const lib = event.target.closest('[data-lib]');
+      if (lib) {
+        if (libraryKind === lib.dataset.lib && !libraryEl.hidden) closeLibrary();
+        else openLibrary(lib.dataset.lib);
+        return;
+      }
+
+      const mark = event.target.closest('[data-mark]');
+      if (mark) {
+        const id = mark.dataset.id;
+        const movie = feed.known[id] || findInCollection('wish', id) ||
+          findInCollection('watched', id);
+        if (!movie) return;
+        const added = toggleCollection(mark.dataset.mark, movie);
+        markDirty();
+        syncMarks();
+        renderLibraryButtons();
+        if (libraryKind) renderLibraryView();
+        refreshEntry();
+        if (added) enrichLibraryItem(id);
+        if (mark.dataset.mark === 'watched' && !filters.query.trim()) {
+          // 刚标记「看过」的电影不再出现在推荐流里。
+          const card = mark.closest('.movie-card');
+          if (card) card.remove();
+          if (added) feed.items = feed.items.filter(function (item) { return item.id !== id; });
+          renderStatus();
         }
-        markDirty();
-        renderPlaylist();
-        syncPickButtons();
-        refreshEntry();
-        stabilizeYear(id);
         return;
       }
 
-      const remove = event.target.closest('[data-unpick]');
+      const remove = event.target.closest('[data-remove]');
       if (remove) {
-        const index = Number(remove.dataset.unpick);
-        const removed = node.movies[index];
-        node.movies.splice(index, 1);
+        const id = remove.dataset.remove;
+        if (libraryKind) removeFromCollection(libraryKind, id);
         markDirty();
-        renderPlaylist();
-        syncPickButtons();
+        renderLibraryButtons();
+        renderLibraryView();
+        syncMarks();
         refreshEntry();
-        if (removed) remove.focus();
         return;
       }
 
-      const open = event.target.closest('[data-detail]');
+      const open = event.target.closest('[data-open]');
       if (open) {
-        openDetail(open.dataset.detail, feed.known[open.dataset.detail]);
+        openDetail(open.dataset.open);
         return;
       }
 
@@ -2690,17 +2772,40 @@
     parts.push(heading, '', escapeMdText(value), '');
   }
 
+  function movieRecordLine(item) {
+    const title = String(item.title || '').replace(/\s*·\s*/g, ' ').replace(/\s+/g, ' ').trim();
+    const bits = [title];
+    if (item.year) bits.push(item.year);
+    if (item.rating) bits.push(item.rating.toFixed(1));
+    if (item.id) bits.push(item.id);
+    if (item.added) bits.push(item.added);
+    if (item.cover) bits.push(item.cover);
+    return '- ' + bits.join(' · ');
+  }
+
   function buildMarkdown() {
     const parts = [
       '# 人生日历',
       '',
       '> 此文件由「人生日历」生成，可直接导入网站恢复记录。',
       '',
-      '- 格式版本：6',
+      '- 格式版本：7',
       '- 导出时间：' + nowStamp(),
       '- 主题色：' + state.color,
       ''
     ];
+
+    [
+      { kind: 'wish', heading: '想看的电影' },
+      { kind: 'watched', heading: '看过的电影' }
+    ].forEach(function (entry) {
+      const list = collectionList(entry.kind);
+      if (!list.length) return;
+      parts.push('## ' + entry.heading, '');
+      list.forEach(function (item) {
+        parts.push(movieRecordLine(item), '');
+      });
+    });
 
     Object.keys(state.years)
       .map(Number)
@@ -2745,14 +2850,6 @@
                   (item.name ? ' · ' + item.name : '');
               }).join('\n');
               pushField(parts, '##### 今日支出', expenseLines);
-              const movieLines = (dNode.movies || []).map(function (item) {
-                const bits = [String(item.title || '').replace(/\s+/g, ' ').trim()];
-                if (item.year) bits.push(item.year);
-                if (item.rating) bits.push(item.rating.toFixed(1));
-                if (item.id) bits.push(item.id);
-                return '- ' + bits.join(' · ');
-              }).filter(function (line) { return line !== '- '; }).join('\n');
-              pushField(parts, '##### 今日电影', movieLines);
               pushField(parts, '##### 明日计划', dNode.next);
             });
         }
@@ -2765,6 +2862,8 @@
     const text = String(source).replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
     const lines = text.split('\n');
     const years = {};
+    const previousLibrary = state.library;
+    state.library = { wish: [], watched: [] };
     let color = null;
     let year = null;
     let month = null;
@@ -2773,6 +2872,7 @@
     let recognized = false;
     let warnings = 0;
     let inHeader = true;
+    let movieSection = null;
 
     function ensureYear(y) {
       const key = String(y);
@@ -2803,7 +2903,7 @@
       const mNode = ensureMonth(y, m);
       const key = String(d);
       if (!mNode.days[key] || typeof mNode.days[key] !== 'object') {
-        mNode.days[key] = { mood: '', weather: '', journal: '', highlights: '', next: '', expenses: [], movies: [] };
+        mNode.days[key] = { mood: '', weather: '', journal: '', highlights: '', next: '', expenses: [] };
       }
       const dNode = mNode.days[key];
       if (typeof dNode.work === 'string') {
@@ -2822,10 +2922,8 @@
           price: item && Number.isFinite(item.price) ? Math.max(0, Math.round(item.price)) : 0
         };
       }).filter(function (item) { return !!(item.name || item.price); });
-      if (!Array.isArray(dNode.movies)) dNode.movies = [];
-      dNode.movies = dNode.movies.map(normalizeMovie).filter(function (item) {
-        return !!(item.id || item.title);
-      });
+      // 旧版「今日电影」字段改由解析器迁移进「看过的电影」。
+      delete dNode.movies;
       return dNode;
     }
 
@@ -2853,10 +2951,22 @@
         }
       }
 
+      match = /^##\s*(想看的电影|看过的电影)\s*$/.exec(line);
+      if (match) {
+        flush();
+        recognized = true;
+        year = null;
+        month = null;
+        day = null;
+        movieSection = match[1] === '想看的电影' ? 'wish' : 'watched';
+        return;
+      }
+
       match = /^##\s*年度\s*[·・]\s*(\d{4})\s*$/.exec(line);
       if (match) {
         flush();
         recognized = true;
+        movieSection = null;
         const y = Number(match[1]);
         if (y < MIN_YEAR || y > MAX_YEAR) {
           warnings += 1;
@@ -2985,9 +3095,10 @@
               apply: function (value) { node.expenses = parseExpenseLines(value); }
             };
           } else if (label === '今日电影' || label === '今日片单' || label === '观影记录') {
+            const date = year + '-' + pad2(month) + '-' + pad2(day);
             target = {
               lines: [],
-              apply: function (value) { node.movies = parseMovieLines(value); }
+              apply: function (value) { migrateDayMovies(parseMovieLines(value), date); }
             };
           } else {
             let field = 'next';
@@ -3001,6 +3112,14 @@
         return;
       }
 
+      if (movieSection) {
+        if (/^\s*-/.test(line)) {
+          const item = parseMovieLine(line, '');
+          if (item) addToCollection(movieSection, item);
+        }
+        return;
+      }
+
       // 未识别的标题行不结束当前字段：旧文件或手写文件里正文的 # 标题
       // 若被当作结构丢弃，会导致整段记录在导入时静默丢失。
       if (target) target.lines.push(line);
@@ -3008,11 +3127,14 @@
 
     flush();
 
+    const library = state.library;
+    state.library = previousLibrary;
+
     if (!recognized) {
       throw new Error('未识别到日历数据：请选择由本站导出的 MD 文件。');
     }
 
-    return { years: years, color: color, warnings: warnings };
+    return { years: years, color: color, warnings: warnings, library: library };
   }
 
   function importTextFile(file) {
@@ -3026,6 +3148,7 @@
     file.text().then(function (text) {
       const parsed = parseMarkdown(text);
       state.years = parsed.years;
+      state.library = parsed.library || { wish: [], watched: [] };
       if (parsed.color) state.color = parsed.color;
       applyTheme(state.color);
       fileHandle = null;
