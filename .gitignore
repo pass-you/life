@@ -2,3 +2,6 @@
 
 /人生日历.md
 /人生日历-*.md
+.cache/
+.tmp/
+__pycache__/
