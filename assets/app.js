@@ -2206,7 +2206,8 @@
 
     function requestPage() {
       if (feed.online !== true) {
-        return Promise.reject(new Error('电影片库需要运行 python serve.py 后访问'));
+        // 离线时不要抛错，交给状态区显示「启动服务」提示与重新检测按钮。
+        return Promise.resolve({ items: [], hasMore: false, offline: true });
       }
       const keyword = filters.query.trim();
       const decade = MOVIE_DECADES.filter(function (item) { return item.label === filters.decade; })[0] || {};
@@ -2299,7 +2300,7 @@
     function openDetail(id) {
       if (!id) return;
       detailBody.innerHTML = '<iframe class="douban-frame" title="豆瓣电影条目" ' +
-        'src="api/movie/page?id=' + encodeURIComponent(id) + '" ' +
+        'src="' + esc(MovieSource.pageUrl(id)) + '" ' +
         'referrerpolicy="no-referrer" loading="eager"></iframe>';
       const frame = detailBody.querySelector('.douban-frame');
       frame.addEventListener('load', function () {
@@ -2339,17 +2340,19 @@
     overlay.setAttribute('aria-labelledby', 'movie-title');
     overlay.innerHTML =
       '<div class="expense-sheet movie-sheet">' +
-      '<div class="movie-head"><div>' +
+      '<div class="movie-head"><div class="movie-head-title">' +
       '<p class="eyebrow">找电影</p>' +
       '<h2 id="movie-title">今天想看点什么？</h2>' +
       '<p class="sub">' + year + ' 年 ' + month + ' 月 ' + day + ' 日 ·<span id="movie-source-note">豆瓣电影片库</span></p>' +
-      '</div><button type="button" class="expense-close movie-close" aria-label="关闭找电影">×</button></div>' +
-      '<div class="movie-collections">' +
-      '<button type="button" class="collection-entry" data-lib="wish" aria-pressed="false">' +
-      '想看的电影 <b data-lib-count="wish">0</b></button>' +
-      '<button type="button" class="collection-entry" data-lib="watched" aria-pressed="false">' +
-      '看过的电影 <b data-lib-count="watched">0</b></button>' +
-      '</div>' +
+      '</div><div class="movie-head-actions">' +
+      '<button type="button" class="collection-entry" data-lib="wish" aria-pressed="false" ' +
+      'aria-label="想看的电影"><span class="collection-text">想看的电影</span>' +
+      '<span class="collection-short">想看</span> <b data-lib-count="wish">0</b></button>' +
+      '<button type="button" class="collection-entry" data-lib="watched" aria-pressed="false" ' +
+      'aria-label="看过的电影"><span class="collection-text">看过的电影</span>' +
+      '<span class="collection-short">看过</span> <b data-lib-count="watched">0</b></button>' +
+      '<button type="button" class="expense-close movie-close" aria-label="关闭找电影">×</button>' +
+      '</div></div>' +
       '<div class="movie-scroll" id="movie-scroll">' +
       '<div class="movie-find" id="movie-find">' +
       '<div class="movie-toolbar">' +
@@ -2486,8 +2489,10 @@
       } else if (feed.online === null) {
         countEl.textContent = '正在连接豆瓣片库…';
       } else if (feed.online !== true) {
-        countEl.innerHTML = '电影片库需要本地服务：在此目录运行 <code>python serve.py</code>，' +
-          '再打开 <code>http://127.0.0.1:8765/</code>。';
+        countEl.innerHTML = '<span class="movie-offline">找电影由本地 <code>serve.py</code> 提供：' +
+          '双击项目里的 <code>启动人生日历.bat</code>（macOS / Linux 运行 <code>python serve.py</code>），' +
+          '它会启动服务并自动打开日历。</span>' +
+          '<button type="button" class="movie-retry" data-start>已启动，重新检测</button>';
       } else if (!feed.items.length) {
         countEl.textContent = feed.note || '没有符合条件的电影，换个筛选条件或关键词试试。';
       } else {
@@ -2632,6 +2637,24 @@
       if (retry) {
         feed.error = '';
         loadMore();
+        return;
+      }
+
+      const start = event.target.closest('[data-start]');
+      if (start) {
+        start.disabled = true;
+        start.textContent = '正在检测…';
+        MovieSource.retry().then(function (available) {
+          if (!overlay.isConnected) return;
+          feed.online = available;
+          if (available) {
+            resetFeed();
+          } else {
+            start.disabled = false;
+            start.textContent = '仍然连不上，再试一次';
+            renderStatus();
+          }
+        });
         return;
       }
 

@@ -37,6 +37,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -55,6 +56,29 @@ SORT_VALUES = {"U", "S", "R", "T"}   # 综合 / 评分 / 评价人数 / 最新
 DOUBAN_SORT = {"U": "U", "S": "S", "R": "R", "T": "T"}
 
 TRANSIENT_STATUS = {403, 418, 429, 500, 502, 503, 504}
+
+LOCAL_ORIGIN = re.compile(r"^(?:null|https?://(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?)$", re.I)
+
+
+def cors_origin(origin: str) -> str:
+    """只把 /api/movie/ 开放给本机来源：file:// 打开时 Origin 为 null，也算本机。"""
+    origin = (origin or "").strip()
+    return origin if origin and LOCAL_ORIGIN.match(origin) else ""
+
+
+def health_url(host: str, port: int) -> str:
+    return "http://%s:%d/api/movie/health" % ("127.0.0.1" if host in ("0.0.0.0", "::") else host, port)
+
+
+def running_instance(host: str, port: int) -> bool:
+    """端口上是否已经有本服务在跑（重复双击启动脚本时复用）。"""
+    request = urllib.request.Request(health_url(host, port), headers={"User-Agent": USER_AGENT})
+    try:
+        with urllib.request.urlopen(request, timeout=1.5) as response:
+            payload = json.loads(response.read(4096).decode("utf-8", "replace"))
+    except (urllib.error.URLError, OSError, ValueError):
+        return False
+    return isinstance(payload, dict) and payload.get("source") == "douban"
 
 
 class Throttle:
@@ -541,6 +565,11 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", cache_control)
         self.send_header("X-Content-Type-Options", "nosniff")
+        origin = getattr(self, "cors", "")
+        if origin:
+            # 页面由 file:// 或别的本地端口打开时，找电影也能直连这个服务。
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
         self.end_headers()
         if not head_only:
             self.wfile.write(body)
@@ -561,6 +590,7 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         path = urllib.parse.unquote(parsed.path)
         query = urllib.parse.parse_qs(parsed.query)
+        self.cors = cors_origin(self.headers.get("Origin", "")) if path.startswith("/api/movie/") else ""
         try:
             if path.startswith("/api/movie/"):
                 self.handle_api(path[len("/api/movie/"):], query, head_only)
@@ -709,22 +739,50 @@ class Handler(BaseHTTPRequestHandler):
         self.send_bytes(200, body, content_type, cache_control, head_only)
 
 
+class LocalServer(ThreadingHTTPServer):
+    """Windows 的 SO_REUSEADDR 允许别的进程重复绑定同一端口，这里改成独占绑定。"""
+
+    allow_reuse_address = os.name != "nt"
+
+    def server_bind(self) -> None:
+        if os.name == "nt" and hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
+
+def open_browser(address: str) -> None:
+    try:
+        webbrowser.open(address)
+    except Exception as exc:  # noqa: BLE001 打不开浏览器不影响服务
+        sys.stderr.write("无法自动打开浏览器（%s），请手动访问 %s\n" % (exc, address))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="人生日历本地服务：静态站点 + 豆瓣电影代理")
     parser.add_argument("--host", default="127.0.0.1", help="监听地址，默认 127.0.0.1")
     parser.add_argument("--port", type=int, default=8765, help="端口，默认 8765")
+    parser.add_argument("--no-browser", action="store_true", help="启动后不自动打开浏览器")
     args = parser.parse_args()
 
+    address = "http://%s:%d/" % ("127.0.0.1" if args.host in ("0.0.0.0", "::") else args.host, args.port)
+
+    if running_instance(args.host, args.port):
+        print("人生日历已经在运行：%s" % address)
+        if not args.no_browser:
+            open_browser(address)
+        return 0
+
     try:
-        server = ThreadingHTTPServer((args.host, args.port), Handler)
+        server = LocalServer((args.host, args.port), Handler)
     except OSError as exc:
         sys.stderr.write("端口 %d 无法使用：%s\n" % (args.port, exc))
         return 1
     server.daemon_threads = True
-    address = "http://%s:%d/" % ("127.0.0.1" if args.host in ("0.0.0.0", "::") else args.host, args.port)
     print("人生日历已启动：%s" % address)
     print("找电影使用豆瓣电影片库（%s/api/movie/），海报会缓存在 .cache/。" % address.rstrip("/"))
     print("按 Ctrl+C 停止。")
+    if not args.no_browser:
+        threading.Timer(0.3, open_browser, (address,)).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:

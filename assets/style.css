@@ -2472,8 +2472,21 @@ body.modal-open {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
+  gap: 16px;
   padding: 20px 26px 12px;
+}
+
+.movie-head-title {
+  min-width: 0;
+}
+
+.movie-head-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  padding-top: 2px;
 }
 
 .movie-head h2 {
@@ -2494,13 +2507,6 @@ body.modal-open {
   overflow: auto;
   padding: 0 26px 24px;
   overscroll-behavior: contain;
-}
-
-.movie-collections {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 0 26px 12px;
 }
 
 .collection-entry {
@@ -2533,6 +2539,10 @@ body.modal-open {
 .collection-entry b {
   font-size: 12px;
   font-weight: 600;
+}
+
+.collection-short {
+  display: none;
 }
 
 .movie-toolbar {
@@ -3003,10 +3013,24 @@ body.modal-open {
 
   .movie-head {
     padding: 16px 16px 10px;
+    gap: 10px;
+    flex-wrap: wrap;
   }
 
   .movie-head h2 {
-    font-size: 22px;
+    font-size: 20px;
+  }
+
+  .movie-head-actions {
+    gap: 6px;
+  }
+
+  .movie-head-actions .collection-text {
+    display: none;
+  }
+
+  .movie-head-actions .collection-short {
+    display: inline;
   }
 
   .movie-scroll {
@@ -3024,10 +3048,6 @@ body.modal-open {
 
   .movie-name {
     font-size: 12.5px;
-  }
-
-  .movie-collections {
-    padding: 0 16px 10px;
   }
 
   .collection-entry {
