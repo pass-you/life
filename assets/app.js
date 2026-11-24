@@ -910,14 +910,160 @@
     }).join('');
   }
 
-  function bindEditor(selector, getValue, setValue) {
+  function safeLink(url) {
+    const value = String(url || '').trim();
+    if (!/^(https?:\/\/|mailto:)/i.test(value)) return '';
+    return value;
+  }
+
+  function renderInlineMarkdown(raw) {
+    const codes = [];
+    const links = [];
+    let source = String(raw);
+
+    source = source.replace(/`([^`\n]+)`/g, function (match, code) {
+      codes.push(code);
+      return '\u0000C' + (codes.length - 1) + '\u0000';
+    });
+    source = source.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, function (match, label, url) {
+      links.push({ label: label, url: url });
+      return '\u0000L' + (links.length - 1) + '\u0000';
+    });
+
+    let text = esc(source);
+    text = text.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+    text = text.replace(/__([^_\n]+)__/g, '<strong>$1</strong>');
+    text = text.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+    text = text.replace(/(^|[^_])_([^_\n]+)_/g, '$1<em>$2</em>');
+    text = text.replace(/~~([^~\n]+)~~/g, '<del>$1</del>');
+
+    text = text.replace(/\u0000C(\d+)\u0000/g, function (match, index) {
+      return '<code>' + esc(codes[Number(index)]) + '</code>';
+    });
+    text = text.replace(/\u0000L(\d+)\u0000/g, function (match, index) {
+      const link = links[Number(index)];
+      const url = safeLink(link.url);
+      if (!url) return esc(link.label);
+      return '<a href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">' +
+        esc(link.label) + '</a>';
+    });
+    return text;
+  }
+
+  function renderMarkdown(source) {
+    const text = String(source || '').replace(/\r\n?/g, '\n');
+    const lines = text.split('\n');
+    const out = [];
+    let i = 0;
+
+    function isBlockStart(line) {
+      return /^(#{1,6}\s|```|~~~|>\s?|\s*(?:[-*+]|\d+\.)\s+|(?:\*\s*){3,}$|(?:-\s*){3,}$|(?:_\s*){3,}$)/.test(line);
+    }
+
+    while (i < lines.length) {
+      const line = lines[i];
+      if (!line.trim()) {
+        i += 1;
+        continue;
+      }
+
+      let match = /^\s*(```|~~~)\s*([^\s`]*)\s*$/.exec(line);
+      if (match) {
+        const fence = match[1];
+        const lang = match[2];
+        i += 1;
+        const code = [];
+        while (i < lines.length && !lines[i].trim().startsWith(fence)) {
+          code.push(lines[i]);
+          i += 1;
+        }
+        if (i < lines.length) i += 1;
+        out.push('<pre><code' + (lang ? ' class="language-' + esc(lang) + '"' : '') + '>' +
+          esc(code.join('\n')) + '</code></pre>');
+        continue;
+      }
+
+      match = /^(#{1,6})\s+(.*)$/.exec(line);
+      if (match) {
+        const level = match[1].length;
+        out.push('<h' + level + '>' + renderInlineMarkdown(match[2]) + '</h' + level + '>');
+        i += 1;
+        continue;
+      }
+
+      if (/^\s*(?:(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,})$/.test(line)) {
+        out.push('<hr>');
+        i += 1;
+        continue;
+      }
+
+      if (/^\s*>/.test(line)) {
+        const quote = [];
+        while (i < lines.length && /^\s*>/.test(lines[i])) {
+          quote.push(lines[i].replace(/^\s*>\s?/, ''));
+          i += 1;
+        }
+        out.push('<blockquote>' + renderMarkdown(quote.join('\n')) + '</blockquote>');
+        continue;
+      }
+
+      match = /^(\s*)([-*+]|\d+\.)\s+(.*)$/.exec(line);
+      if (match) {
+        const ordered = /\d+\./.test(match[2]);
+        const items = [];
+        while (i < lines.length) {
+          const item = /^(\s*)([-*+]|\d+\.)\s+(.*)$/.exec(lines[i]);
+          if (!item || /\d+\./.test(item[2]) !== ordered) break;
+          let content = item[3];
+          const task = /^\[([ xX])\]\s+(.*)$/.exec(content);
+          let prefix = '';
+          if (task) {
+            prefix = '<span class="md-task" aria-hidden="true">' +
+              (task[1].toLowerCase() === 'x' ? '✓' : '○') + '</span> ';
+            content = task[2];
+          }
+          items.push('<li>' + prefix + renderInlineMarkdown(content) + '</li>');
+          i += 1;
+        }
+        const tag = ordered ? 'ol' : 'ul';
+        out.push('<' + tag + '>' + items.join('') + '</' + tag + '>');
+        continue;
+      }
+
+      const paragraph = [];
+      while (i < lines.length && lines[i].trim() && !isBlockStart(lines[i])) {
+        paragraph.push(lines[i]);
+        i += 1;
+      }
+      out.push('<p>' + renderInlineMarkdown(paragraph.join('\n')).replace(/\n/g, '<br>') + '</p>');
+    }
+
+    return out.join('');
+  }
+
+  function renderPreview(preview, text) {
+    if (!preview) return;
+    const html = renderMarkdown(text);
+    preview.innerHTML = html || '<p class="md-empty">输入内容后，这里会实时预览 Markdown。</p>';
+  }
+
+  function bindEditor(selector, getValue, setValue, previewSelector) {
     const el = app.querySelector(selector);
     if (!el) return;
+    const preview = previewSelector ? app.querySelector(previewSelector) : null;
     el.value = getValue() || '';
+
+    function syncPreview() {
+      if (preview) renderPreview(preview, el.value);
+    }
+
     el.addEventListener('input', function () {
       setValue(el.value);
       markDirty();
+      syncPreview();
     });
+
+    syncPreview();
   }
 
   function reviewMarkup(kind, year, month, day) {
@@ -932,7 +1078,7 @@
         '<div class="review-head"><h3>' + prevYear + ' 年 · 年度计划</h3>' +
         '<a class="review-link" href="#/' + prevYear + '">前往 ' + prevYear + ' 年</a></div>' +
         (text
-          ? '<p class="review-body">' + esc(text) + '</p>'
+          ? '<div class="md-body">' + renderMarkdown(text) + '</div>'
           : '<p class="review-empty">这一年还没有写下年度计划。</p>') +
         '</aside>';
     }
@@ -949,7 +1095,7 @@
         '<div class="review-head"><h3>' + prev.y + ' 年 ' + prev.m + ' 月 · 月计划</h3>' +
         '<a class="review-link" href="#/' + prev.y + '/' + prev.m + '">前往 ' + prev.m + ' 月</a></div>' +
         (text
-          ? '<p class="review-body">' + esc(text) + '</p>'
+          ? '<div class="md-body">' + renderMarkdown(text) + '</div>'
           : '<p class="review-empty">这个月还没有写下月计划。</p>') +
         '<p class="review-meta">当月记录 ' + recorded + ' 天</p></aside>';
     }
@@ -975,16 +1121,16 @@
         esc(status) + '</p></div>';
     }
     if (journal) {
-      blocks += '<div class="review-block"><h4>今日记录</h4><p class="review-body">' +
-        esc(journal) + '</p></div>';
+      blocks += '<div class="review-block"><h4>今日记录</h4><div class="md-body">' +
+        renderMarkdown(journal) + '</div></div>';
     }
     if (highlights) {
-      blocks += '<div class="review-block"><h4>值得记住的小事</h4><p class="review-body">' +
-        esc(highlights) + '</p></div>';
+      blocks += '<div class="review-block"><h4>值得记住的小事</h4><div class="md-body">' +
+        renderMarkdown(highlights) + '</div></div>';
     }
     if (plan) {
-      blocks += '<div class="review-block"><h4>当时写下的明日计划</h4><p class="review-body">' +
-        esc(plan) + '</p></div>';
+      blocks += '<div class="review-block"><h4>当时写下的明日计划</h4><div class="md-body">' +
+        renderMarkdown(plan) + '</div></div>';
     }
     if (!blocks) {
       blocks = '<p class="review-empty">这一天没有记录。</p>';
@@ -1114,8 +1260,11 @@
       '</div></div></header>' +
       '<div id="review-slot" class="review-slot"></div>' +
       '<section class="card"><div class="card-head"><h2>年度计划</h2></div>' +
+      '<div class="md-editor">' +
       '<textarea id="plan-editor" class="plan-input" rows="7" aria-label="年度计划" ' +
-      'placeholder="这一年想完成什么？想成为怎样的人？写下几件最重要的事。"></textarea></section>' +
+      'placeholder="这一年想完成什么？想成为怎样的人？写下几件最重要的事。"></textarea>' +
+      '<div id="plan-preview" class="md-preview" aria-label="年度计划 Markdown 预览"></div>' +
+      '</div></section>' +
       '<div class="section-head"><h2>选择月份</h2><p>点击月份，制定月计划并进入每日记录</p></div>' +
       '<div class="month-grid">' + months + '</div>' +
       '</section>';
@@ -1124,7 +1273,7 @@
       return yearPlanOf(year);
     }, function (value) {
       yearNode(year, true).plan = value;
-    });
+    }, '#plan-preview');
 
     wireReview('year', year);
   }
@@ -1200,8 +1349,11 @@
       '</div></div></header>' +
       '<div id="review-slot" class="review-slot"></div>' +
       '<section class="card"><div class="card-head"><h2>月计划</h2></div>' +
+      '<div class="md-editor">' +
       '<textarea id="plan-editor" class="plan-input" rows="6" aria-label="月计划" ' +
-      'placeholder="这个月的重点是什么？想在哪些事情上保持节奏？"></textarea></section>' +
+      'placeholder="这个月的重点是什么？想在哪些事情上保持节奏？"></textarea>' +
+      '<div id="plan-preview" class="md-preview" aria-label="月计划 Markdown 预览"></div>' +
+      '</div></section>' +
       '<div class="section-head"><h2>选择日期</h2><p>点击某一天，记录今天的生活与明日计划</p></div>' +
       '<div class="calendar"><div class="weekdays">' +
       WEEKDAYS.map(function (w) { return '<span>' + w + '</span>'; }).join('') +
@@ -1212,7 +1364,7 @@
       return monthPlanOf(year, month);
     }, function (value) {
       monthNode(year, month, true).plan = value;
-    });
+    }, '#plan-preview');
 
     wireReview('month', year, month);
   }
@@ -1276,18 +1428,24 @@
       '</div>' +
       '<section class="card journal-card">' +
       '<div class="card-head"><h2>今日记录</h2></div>' +
+      '<div class="md-editor">' +
       '<textarea id="journal-editor" rows="9" aria-label="今日记录" ' +
       'placeholder="工作、学习、生活、见闻、心情……今天发生了什么？"></textarea>' +
-      '</section>' +
+      '<div id="journal-preview" class="md-preview" aria-label="今日记录 Markdown 预览"></div>' +
+      '</div></section>' +
       '<div class="day-grid">' +
       '<section class="card"><div class="card-head"><h2>值得记住的小事</h2></div>' +
+      '<div class="md-editor md-editor--stack">' +
       '<textarea id="highlights-editor" rows="4" aria-label="值得记住的小事" ' +
       'placeholder="每行一件，比如早起散步、读完一章书、和朋友吃饭。"></textarea>' +
-      '</section>' +
+      '<div id="highlights-preview" class="md-preview" aria-label="值得记住的小事 Markdown 预览"></div>' +
+      '</div></section>' +
       '<section class="card"><div class="card-head"><h2>明日计划</h2></div>' +
+      '<div class="md-editor md-editor--stack">' +
       '<textarea id="next-editor" rows="4" aria-label="明日计划" ' +
       'placeholder="明天想先做的一两件事……"></textarea>' +
-      '</section></div>' +
+      '<div id="next-preview" class="md-preview" aria-label="明日计划 Markdown 预览"></div>' +
+      '</div></section></div>' +
       '</section>';
 
     const chips = app.querySelectorAll('.mood-chip');
@@ -1326,19 +1484,19 @@
       return node ? node.journal : '';
     }, function (value) {
       dayNode(year, month, day, true).journal = value;
-    });
+    }, '#journal-preview');
 
     bindEditor('#highlights-editor', function () {
       return node ? node.highlights : '';
     }, function (value) {
       dayNode(year, month, day, true).highlights = value;
-    });
+    }, '#highlights-preview');
 
     bindEditor('#next-editor', function () {
       return node ? node.next : '';
     }, function (value) {
       dayNode(year, month, day, true).next = value;
-    });
+    }, '#next-preview');
 
     wireReview('day', year, month, day);
   }

@@ -707,6 +707,177 @@ textarea:focus {
   min-height: 190px;
 }
 
+/* ---------- Markdown 编辑 / 实时预览 ---------- */
+
+.md-editor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
+  align-items: stretch;
+}
+
+.md-editor--stack {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+}
+
+.md-preview {
+  min-width: 0;
+  max-height: 360px;
+  overflow: auto;
+  padding: 12px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--accent-ghost);
+  font-size: 14px;
+  line-height: 1.75;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.md-editor--stack .md-preview {
+  min-height: 90px;
+  max-height: 180px;
+}
+
+.md-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.md-preview p,
+.md-body p {
+  margin: 0 0 0.7em;
+}
+
+.md-preview > :last-child,
+.md-body > :last-child {
+  margin-bottom: 0;
+}
+
+.md-preview h1,
+.md-body h1 {
+  margin: 0.85em 0 0.45em;
+  font-size: 1.45em;
+  line-height: 1.35;
+  font-weight: 600;
+}
+
+.md-preview h2,
+.md-body h2 {
+  margin: 0.8em 0 0.4em;
+  font-size: 1.25em;
+  line-height: 1.4;
+  font-weight: 600;
+}
+
+.md-preview h3,
+.md-body h3 {
+  margin: 0.75em 0 0.35em;
+  font-size: 1.12em;
+  font-weight: 600;
+}
+
+.md-preview h4,
+.md-body h4,
+.md-preview h5,
+.md-body h5,
+.md-preview h6,
+.md-body h6 {
+  margin: 0.7em 0 0.3em;
+  font-size: 1em;
+  font-weight: 600;
+}
+
+.md-preview ul,
+.md-body ul,
+.md-preview ol,
+.md-body ol {
+  margin: 0.2em 0 0.75em;
+  padding-left: 1.45em;
+}
+
+.md-preview li,
+.md-body li {
+  margin: 0.15em 0;
+}
+
+.md-preview blockquote,
+.md-body blockquote {
+  margin: 0.5em 0 0.8em;
+  padding: 2px 0 2px 12px;
+  border-left: 2px solid var(--accent-line);
+  color: var(--muted);
+}
+
+.md-preview code,
+.md-body code {
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--accent-soft);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 0.9em;
+}
+
+.md-preview pre,
+.md-body pre {
+  margin: 0.5em 0 0.8em;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+  overflow: auto;
+}
+
+.md-preview pre code,
+.md-body pre code {
+  padding: 0;
+  background: none;
+  font-size: 0.9em;
+}
+
+.md-preview a,
+.md-body a {
+  color: var(--accent-ink);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.md-preview hr,
+.md-body hr {
+  margin: 1em 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+
+.md-preview del,
+.md-body del {
+  color: var(--muted);
+}
+
+.md-task {
+  margin-right: 5px;
+  color: var(--accent-ink);
+}
+
+.md-body {
+  max-height: 280px;
+  overflow: auto;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.md-body > :first-child {
+  margin-top: 0;
+}
+
+@media (max-width: 860px) {
+  .md-editor {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 /* ---------- 月份选择 ---------- */
 
 .section-head {
