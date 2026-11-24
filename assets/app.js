@@ -3,7 +3,7 @@
   'use strict';
 
   const MIN_YEAR = 2006;
-  const MAX_YEAR = 2106;
+  const MAX_YEAR = 2105;
   const DEFAULT_COLOR = '#e26a8d';
   const PRESETS = [
     { name: '樱粉', color: '#e26a8d' },
@@ -833,7 +833,7 @@
     app.innerHTML = '<section class="view">' +
       '<div class="home-head">' +
       '<div><p class="eyebrow">LIFE CALENDAR</p><h1>选择一年</h1>' +
-      '<p class="sub">2006 至 2106，共 101 年 · 从任意一天开始记录</p></div>' +
+      '<p class="sub">2006 至 2105，共 100 年 · 从任意一天开始记录</p></div>' +
       '<a class="btn" href="' + todayHref + '">回到今天</a>' +
       '</div>' +
       '<div class="year-groups">' + sections + '</div>' +
