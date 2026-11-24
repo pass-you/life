@@ -951,6 +951,35 @@
   }
 
   function renderMarkdown(source) {
+    const text = String(source || '');
+    if (window.marked && typeof window.marked.parse === 'function' && window.DOMPurify) {
+      try {
+        const html = window.marked.parse(text, { gfm: true, breaks: true });
+        return window.DOMPurify.sanitize(html, {
+          USE_PROFILES: { html: true },
+          FORBID_TAGS: ['style', 'iframe', 'form', 'object', 'embed'],
+          FORBID_ATTR: ['style']
+        });
+      } catch (err) {
+        /* fall through to the local renderer */
+      }
+    }
+    return renderMarkdownFallback(text);
+  }
+
+  function decorateMarkdown(root) {
+    if (!root) return;
+    root.querySelectorAll('a').forEach(function (link) {
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+    });
+    root.querySelectorAll('img').forEach(function (img) {
+      img.loading = 'lazy';
+      img.decoding = 'async';
+    });
+  }
+
+  function renderMarkdownFallback(source) {
     const text = String(source || '').replace(/\r\n?/g, '\n');
     const lines = text.split('\n');
     const out = [];
@@ -1003,7 +1032,7 @@
           quote.push(lines[i].replace(/^\s*>\s?/, ''));
           i += 1;
         }
-        out.push('<blockquote>' + renderMarkdown(quote.join('\n')) + '</blockquote>');
+        out.push('<blockquote>' + renderMarkdownFallback(quote.join('\n')) + '</blockquote>');
         continue;
       }
 
@@ -1041,29 +1070,91 @@
     return out.join('');
   }
 
-  function renderPreview(preview, text) {
-    if (!preview) return;
-    const html = renderMarkdown(text);
-    preview.innerHTML = html || '<p class="md-empty">输入内容后，这里会实时预览 Markdown。</p>';
-  }
+  function bindMarkdownField(selector, getValue, setValue) {
+    const input = app.querySelector(selector);
+    if (!input) return;
+    const field = input.closest('.md-field');
+    const rendered = field ? field.querySelector('.md-rendered') : null;
+    input.value = getValue() || '';
+    let renderTimer = 0;
+    let blurTimer = 0;
 
-  function bindEditor(selector, getValue, setValue, previewSelector) {
-    const el = app.querySelector(selector);
-    if (!el) return;
-    const preview = previewSelector ? app.querySelector(previewSelector) : null;
-    el.value = getValue() || '';
-
-    function syncPreview() {
-      if (preview) renderPreview(preview, el.value);
+    function render() {
+      clearTimeout(renderTimer);
+      renderTimer = 0;
+      if (!rendered) return;
+      const html = renderMarkdown(input.value);
+      rendered.innerHTML = html || '<p class="md-empty">点击开始写 Markdown 笔记。</p>';
+      decorateMarkdown(rendered);
     }
 
-    el.addEventListener('input', function () {
-      setValue(el.value);
+    function showEditor() {
+      clearTimeout(blurTimer);
+      if (rendered) rendered.hidden = true;
+      input.hidden = false;
+      input.focus();
+      const end = input.value.length;
+      try { input.setSelectionRange(end, end); } catch (err) { /* 忽略 */ }
+    }
+
+    function showRendered() {
+      clearTimeout(blurTimer);
+      if (!input.value.trim()) {
+        input.hidden = false;
+        if (rendered) rendered.hidden = true;
+        return;
+      }
+      render();
+      input.hidden = true;
+      if (rendered) rendered.hidden = false;
+    }
+
+    input.addEventListener('input', function () {
+      setValue(input.value);
       markDirty();
-      syncPreview();
+      clearTimeout(renderTimer);
+      renderTimer = setTimeout(render, 120);
     });
 
-    syncPreview();
+    input.addEventListener('focus', function () {
+      clearTimeout(blurTimer);
+    });
+    input.addEventListener('blur', function () {
+      clearTimeout(blurTimer);
+      blurTimer = setTimeout(showRendered, 150);
+    });
+    input.addEventListener('keydown', function (event) {
+      if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+        event.preventDefault();
+        input.blur();
+      }
+    });
+
+    if (rendered) {
+      rendered.tabIndex = 0;
+      rendered.setAttribute('role', 'group');
+      rendered.setAttribute('aria-label', 'Markdown 笔记，点击编辑');
+      rendered.title = '点击编辑';
+      rendered.addEventListener('click', function (event) {
+        if (event.target.closest('a') || event.target.closest('img')) return;
+        showEditor();
+      });
+      rendered.addEventListener('keydown', function (event) {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          showEditor();
+        }
+      });
+    }
+
+    if (input.value.trim()) {
+      render();
+      input.hidden = true;
+      if (rendered) rendered.hidden = false;
+    } else {
+      input.hidden = false;
+      if (rendered) rendered.hidden = true;
+    }
   }
 
   function reviewMarkup(kind, year, month, day) {
@@ -1158,6 +1249,7 @@
         return;
       }
       slot.innerHTML = reviewMarkup(kind, year, month, day);
+      decorateMarkdown(slot);
       btn.setAttribute('aria-expanded', 'true');
       requestAnimationFrame(updateWeatherOverlaySize);
     });
@@ -1260,20 +1352,20 @@
       '</div></div></header>' +
       '<div id="review-slot" class="review-slot"></div>' +
       '<section class="card"><div class="card-head"><h2>年度计划</h2></div>' +
-      '<div class="md-editor">' +
+      '<div class="md-field">' +
       '<textarea id="plan-editor" class="plan-input" rows="7" aria-label="年度计划" ' +
       'placeholder="这一年想完成什么？想成为怎样的人？写下几件最重要的事。"></textarea>' +
-      '<div id="plan-preview" class="md-preview" aria-label="年度计划 Markdown 预览"></div>' +
+      '<div class="md-rendered" hidden></div>' +
       '</div></section>' +
       '<div class="section-head"><h2>选择月份</h2><p>点击月份，制定月计划并进入每日记录</p></div>' +
       '<div class="month-grid">' + months + '</div>' +
       '</section>';
 
-    bindEditor('#plan-editor', function () {
+    bindMarkdownField('#plan-editor', function () {
       return yearPlanOf(year);
     }, function (value) {
       yearNode(year, true).plan = value;
-    }, '#plan-preview');
+    });
 
     wireReview('year', year);
   }
@@ -1349,10 +1441,10 @@
       '</div></div></header>' +
       '<div id="review-slot" class="review-slot"></div>' +
       '<section class="card"><div class="card-head"><h2>月计划</h2></div>' +
-      '<div class="md-editor">' +
+      '<div class="md-field">' +
       '<textarea id="plan-editor" class="plan-input" rows="6" aria-label="月计划" ' +
       'placeholder="这个月的重点是什么？想在哪些事情上保持节奏？"></textarea>' +
-      '<div id="plan-preview" class="md-preview" aria-label="月计划 Markdown 预览"></div>' +
+      '<div class="md-rendered" hidden></div>' +
       '</div></section>' +
       '<div class="section-head"><h2>选择日期</h2><p>点击某一天，记录今天的生活与明日计划</p></div>' +
       '<div class="calendar"><div class="weekdays">' +
@@ -1360,11 +1452,11 @@
       '</div><div class="days">' + cells + '</div></div>' +
       '</section>';
 
-    bindEditor('#plan-editor', function () {
+    bindMarkdownField('#plan-editor', function () {
       return monthPlanOf(year, month);
     }, function (value) {
       monthNode(year, month, true).plan = value;
-    }, '#plan-preview');
+    });
 
     wireReview('month', year, month);
   }
@@ -1428,23 +1520,23 @@
       '</div>' +
       '<section class="card journal-card">' +
       '<div class="card-head"><h2>今日记录</h2></div>' +
-      '<div class="md-editor">' +
+      '<div class="md-field">' +
       '<textarea id="journal-editor" rows="9" aria-label="今日记录" ' +
       'placeholder="工作、学习、生活、见闻、心情……今天发生了什么？"></textarea>' +
-      '<div id="journal-preview" class="md-preview" aria-label="今日记录 Markdown 预览"></div>' +
+      '<div class="md-rendered" hidden></div>' +
       '</div></section>' +
       '<div class="day-grid">' +
       '<section class="card"><div class="card-head"><h2>值得记住的小事</h2></div>' +
-      '<div class="md-editor md-editor--stack">' +
+      '<div class="md-field">' +
       '<textarea id="highlights-editor" rows="4" aria-label="值得记住的小事" ' +
       'placeholder="每行一件，比如早起散步、读完一章书、和朋友吃饭。"></textarea>' +
-      '<div id="highlights-preview" class="md-preview" aria-label="值得记住的小事 Markdown 预览"></div>' +
+      '<div class="md-rendered" hidden></div>' +
       '</div></section>' +
       '<section class="card"><div class="card-head"><h2>明日计划</h2></div>' +
-      '<div class="md-editor md-editor--stack">' +
+      '<div class="md-field">' +
       '<textarea id="next-editor" rows="4" aria-label="明日计划" ' +
       'placeholder="明天想先做的一两件事……"></textarea>' +
-      '<div id="next-preview" class="md-preview" aria-label="明日计划 Markdown 预览"></div>' +
+      '<div class="md-rendered" hidden></div>' +
       '</div></section></div>' +
       '</section>';
 
@@ -1480,23 +1572,23 @@
       });
     });
 
-    bindEditor('#journal-editor', function () {
+    bindMarkdownField('#journal-editor', function () {
       return node ? node.journal : '';
     }, function (value) {
       dayNode(year, month, day, true).journal = value;
-    }, '#journal-preview');
+    });
 
-    bindEditor('#highlights-editor', function () {
+    bindMarkdownField('#highlights-editor', function () {
       return node ? node.highlights : '';
     }, function (value) {
       dayNode(year, month, day, true).highlights = value;
-    }, '#highlights-preview');
+    });
 
-    bindEditor('#next-editor', function () {
+    bindMarkdownField('#next-editor', function () {
       return node ? node.next : '';
     }, function (value) {
       dayNode(year, month, day, true).next = value;
-    }, '#next-preview');
+    });
 
     wireReview('day', year, month, day);
   }
