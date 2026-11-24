@@ -248,10 +248,83 @@ def douban_discover(query: dict[str, list[str]]) -> dict:
     return result
 
 
+TITLE_NOISE_RE = re.compile(r"[\s·・:：,，.。!！?？'\"“”‘’()（）\[\]【】<>《》\-—_/\\|]+")
+FALLBACK_SCAN_PAGES = 3
+
+
+def title_key(text: str) -> str:
+    return TITLE_NOISE_RE.sub("", text).lower()
+
+
+def douban_search_by_title(keyword: str, start: int, query: dict[str, list[str]]) -> dict:
+    """关键词搜索无结果时，回退到 discover 接口（new_search_subjects），按片名匹配召回。"""
+    params = {
+        "sort": DOUBAN_SORT.get((query.get("sort") or ["U"])[0].upper(), "U"),
+        "range": "0,10",
+        "tags": "",
+        "keyword": keyword,
+    }
+    genres = (query.get("genres") or [""])[0].strip()
+    countries = (query.get("countries") or [""])[0].strip()
+    if genres and genres != "全部":
+        params["genres"] = genres
+    if countries and countries != "全部":
+        params["countries"] = countries
+    year_from = (query.get("from") or [""])[0].strip()
+    year_to = (query.get("to") or [""])[0].strip()
+    if year_from.isdigit() or year_to.isdigit():
+        params["year_range"] = "%s,%s" % (
+            year_from if year_from.isdigit() else "1900",
+            year_to if year_to.isdigit() else "2030",
+        )
+    key = "search-title:" + urllib.parse.urlencode(params)
+    cached = cache_read_json(key, API_TTL)
+    if cached is None:
+        needle = title_key(keyword)
+        matches: list[dict] = []
+        seen: set[str] = set()
+        page_start = 0
+        for _ in range(FALLBACK_SCAN_PAGES):
+            page_params = dict(params, start=str(page_start))
+            url = "https://movie.douban.com/j/new_search_subjects?" + urllib.parse.urlencode(page_params)
+            payload = http_get_json(url, "https://movie.douban.com/explore")
+            raw_items = payload.get("data") if isinstance(payload, dict) else None
+            if not isinstance(raw_items, list) or not raw_items:
+                break
+            for raw in raw_items:
+                if not isinstance(raw, dict):
+                    continue
+                item = normalize_subject(raw)
+                if not item["id"] or not item["title"] or item["id"] in seen:
+                    continue
+                if needle and needle not in title_key(item["title"]):
+                    continue
+                seen.add(item["id"])
+                matches.append(item)
+            if len(raw_items) < PAGE_SIZE:
+                break
+            page_start += PAGE_SIZE
+        cached = {"matches": matches, "keyword": keyword}
+        cache_write_json(key, cached)
+    matches = cached.get("matches") or []
+    items = matches[start:start + PAGE_SIZE]
+    if matches:
+        note = "关键词匹配为空，已按片名从豆瓣全库召回 %d 部" % len(matches)
+    else:
+        note = "关键词没有结果，豆瓣全库也没有片名包含「%s」的影片" % keyword
+    return {
+        "items": items,
+        "hasMore": len(matches) > start + len(items),
+        "start": start,
+        "fallback": True,
+        "note": note,
+    }
+
+
 def douban_search(query: dict[str, list[str]]) -> dict:
     keyword = (query.get("q") or [""])[0].strip()[:60]
     if not keyword:
-        return {"items": [], "hasMore": False, "start": 0}
+        return {"items": [], "hasMore": False, "start": 0, "fallback": False}
     start = str(max(0, int((query.get("start") or ["0"])[0] or 0)))
     params = {
         "type": "movie",
@@ -264,14 +337,18 @@ def douban_search(query: dict[str, list[str]]) -> dict:
     key = "search:" + urllib.parse.urlencode(params)
     cached = cache_read_json(key, API_TTL)
     if cached is not None:
-        return cached
-    payload = http_get_json(url, "https://movie.douban.com/")
-    raw_items = payload.get("subjects") if isinstance(payload, dict) else None
-    items = [normalize_subject(item) for item in (raw_items or []) if isinstance(item, dict)]
-    items = [item for item in items if item["id"] and item["title"]]
-    result = {"items": items, "hasMore": len(items) >= PAGE_SIZE, "start": int(start)}
-    cache_write_json(key, result)
-    return result
+        result = cached
+    else:
+        payload = http_get_json(url, "https://movie.douban.com/")
+        raw_items = payload.get("subjects") if isinstance(payload, dict) else None
+        items = [normalize_subject(item) for item in (raw_items or []) if isinstance(item, dict)]
+        items = [item for item in items if item["id"] and item["title"]]
+        result = {"items": items, "hasMore": len(items) >= PAGE_SIZE, "start": int(start), "fallback": False}
+        cache_write_json(key, result)
+    if result.get("items") or int(start) > 0:
+        return result
+    # 关键词接口无结果：回退到 discover 接口按片名召回（如《两京十五日》）。
+    return douban_search_by_title(keyword, int(start), query)
 
 
 def douban_detail(query: dict[str, list[str]]) -> dict:

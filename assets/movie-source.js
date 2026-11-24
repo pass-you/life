@@ -51,6 +51,11 @@ window.MovieSource = (function () {
   function search(options) {
     const params = paramsOf(options);
     params.set('q', options.q || '');
+    if (options.sort) params.set('sort', options.sort);
+    if (options.genres) params.set('genres', options.genres);
+    if (options.countries) params.set('countries', options.countries);
+    if (options.from) params.set('from', String(options.from));
+    if (options.to) params.set('to', String(options.to));
     return getJSON('search?' + params.toString());
   }
 

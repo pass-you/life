@@ -2138,7 +2138,8 @@
       hasMore: true,
       loading: false,
       token: 0,
-      error: ''
+      error: '',
+      note: ''
     };
 
     function pickIds() {
@@ -2215,8 +2216,18 @@
     function requestPage() {
       if (feed.online !== true) return Promise.resolve(offlinePage(feed.start));
       const keyword = filters.query.trim();
-      if (keyword) return MovieSource.search({ q: keyword, start: feed.start });
       const decade = MOVIE_DECADES.filter(function (item) { return item.label === filters.decade; })[0] || {};
+      if (keyword) {
+        return MovieSource.search({
+          q: keyword,
+          genres: filters.genre,
+          countries: filters.region,
+          from: decade.from,
+          to: decade.to,
+          sort: filters.sort,
+          start: feed.start
+        });
+      }
       return MovieSource.discover({
         genres: filters.genre,
         countries: filters.region,
@@ -2404,11 +2415,15 @@
       } else if (feed.online !== true) {
         countEl.innerHTML = '离线片库 <b>' + feed.items.length + '</b>部 ·运行 <code>python serve.py</code> 接入豆瓣全库';
       } else if (!feed.items.length) {
-        countEl.textContent = '没有符合条件的电影，换个筛选条件或关键词试试。';
+        countEl.textContent = feed.note || '没有符合条件的电影，换个筛选条件或关键词试试。';
       } else {
         const keyword = filters.query.trim();
         countEl.innerHTML = '已加载 <b>' + feed.items.length + '</b>部 ·豆瓣电影片库' +
-          (keyword ? ' ·关键词「' + esc(keyword) + '」' : '') + (feed.loading ? ' ·加载中…' : '');
+          (keyword ? ' ·关键词「' + esc(keyword) + '」' : '') +
+          (feed.loading ? ' ·加载中…' : '');
+        if (feed.note) {
+          countEl.innerHTML += '<span class="movie-note">' + esc(feed.note) + '</span>';
+        }
       }
       moreButton.hidden = !feed.hasMore || !!feed.error;
       moreButton.disabled = feed.loading;
@@ -2442,6 +2457,7 @@
         });
         feed.items = feed.items.concat(items);
         feed.start += items.length;
+        feed.note = page.note || '';
         feed.hasMore = !!page.hasMore && items.length > 0;
         clearSkeleton();
         if (items.length) grid.insertAdjacentHTML('beforeend', items.map(cardMarkup).join(''));
@@ -2461,6 +2477,7 @@
       feed.hasMore = true;
       feed.loading = false;
       feed.error = '';
+      feed.note = '';
       grid.innerHTML = '';
       skeleton();
       renderStatus();

@@ -2842,6 +2842,16 @@ body.modal-open {
   color: #b4554c;
 }
 
+.movie-note {
+  display: block;
+  margin-top: 3px;
+  color: var(--accent-ink);
+}
+
+.movie-note::before {
+  content: '· ';
+}
+
 .movie-retry {
   padding: 2px 10px;
   border: 1px solid var(--accent-line);
