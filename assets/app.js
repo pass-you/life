@@ -1366,35 +1366,30 @@
 
     for (let day = 1; day <= total; day += 1) {
       const node = dayNode(year, month, day);
-      let preview = '';
-      if (node) {
-        const journal = (node.journal || '').trim();
-        const highlights = (node.highlights || '').trim();
-        const mood = (node.mood || '').trim();
-        const weather = (node.weather || '').trim();
-        const plan = (node.next || '').trim();
-        if (journal) preview = journal;
-        else if (highlights) preview = highlights.replace(/\n+/g, ' · ');
-        else {
-          const status = [
-            mood ? '心情：' + mood : '',
-            weather ? '天气：' + weather : ''
-          ].filter(Boolean).join(' · ');
-          preview = status || (plan ? '明日：' + plan : '');
-        }
+      const mood = node ? (node.mood || '').trim() : '';
+      const weather = node ? (node.weather || '').trim() : '';
+      const weatherItem = weather ? weatherByLabel(weather) : null;
+      let meta = '';
+      if (mood) {
+        meta += '<span class="day-mood" title="心情：' + esc(mood) + '">' + esc(mood) + '</span>';
       }
-      preview = preview.replace(/\s+/g, ' ').slice(0, 80);
+      if (weatherItem) {
+        meta += '<span class="day-weather" title="天气：' + esc(weather) + '">' +
+          weatherIcon(weatherItem.icon) + '</span>';
+      }
       const has = hasDayContent(node);
       const isToday = today.getFullYear() === year && today.getMonth() + 1 === month &&
         today.getDate() === day;
       const weekday = weekdayName(year, month, day);
+      const moodText = mood ? '，心情' + mood : '';
+      const weatherText = weather ? '，天气' + weather : '';
 
       cells += '<a class="day-cell' + (has ? ' has-content' : '') +
         (isToday ? ' is-today' : '') + '" href="#/' + year + '/' + month + '/' + day + '"' +
         ' aria-label="' + year + ' 年 ' + month + ' 月 ' + day + ' 日，星期' + weekday +
-        (has ? '，有记录' : '') + '">' +
+        moodText + weatherText + (has ? '，有记录' : '') + '">' +
         '<span class="day-num">' + day + '</span>' +
-        (has && preview ? '<span class="day-preview">' + esc(preview) + '</span>' : '') +
+        (meta ? '<span class="day-meta-mini">' + meta + '</span>' : '') +
         '</a>';
     }
 
