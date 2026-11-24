@@ -1375,6 +1375,7 @@
       }
       if (weatherItem) {
         meta += '<span class="day-weather" title="天气：' + esc(weather) + '">' +
+          '<span class="day-weather-label">天气</span>' +
           weatherIcon(weatherItem.icon) + '</span>';
       }
       const has = hasDayContent(node);
