@@ -666,6 +666,10 @@
 
   async function syncToFile() {
     if (!fileHandle) return;
+    if (flushVditorEditors()) {
+      dirty = true;
+      editRevision += 1;
+    }
     if (syncInFlight) {
       syncQueued = true;
       return;
@@ -860,6 +864,7 @@
   }
 
   window.addEventListener('beforeunload', function (event) {
+    if (flushVditorEditors()) dirty = true;
     if (!dirty) return;
     event.preventDefault();
     event.returnValue = '';
@@ -1133,12 +1138,30 @@
   }
 
   let vditorInstances = [];
+  let vditorFields = [];
 
   function destroyVditorEditors() {
     vditorInstances.forEach(function (editor) {
       try { editor.destroy(); } catch (err) { /* 忽略 */ }
     });
     vditorInstances = [];
+    vditorFields = [];
+  }
+
+  // Vditor 的 input 回调有延迟；导出、同步、切换页面前主动读一次，
+  // 避免最后几个字还没写回数据模型就落盘。
+  function flushVditorEditors() {
+    let changed = false;
+    vditorFields.forEach(function (entry) {
+      if (!entry.isReady()) return;
+      let value;
+      try { value = entry.editor.getValue(); } catch (err) { return; }
+      if (typeof value !== 'string' || value === entry.lastValue) return;
+      entry.lastValue = value;
+      entry.setValue(value);
+      changed = true;
+    });
+    return changed;
   }
 
   function bindVditorField(selector, getValue, setValue, height, placeholder) {
@@ -1192,6 +1215,13 @@
           ready = true;
         }
       });
+      const field = {
+        editor: editor,
+        setValue: setValue,
+        lastValue: initial,
+        isReady: function () { return ready; }
+      };
+      vditorFields.push(field);
       vditorInstances.push(editor);
     } catch (err) {
       fallback();
@@ -2005,8 +2035,10 @@
   }
 
   function pushField(parts, heading, text) {
-    const value = String(text == null ? '' : text).trim();
-    if (!value) return;
+    // 保留内容的首行缩进与末尾空行，避免破坏 Markdown 代码块；只用 trim 判断是否为空。
+    const raw = String(text == null ? '' : text).replace(/\r\n?/g, '\n');
+    if (!raw.trim()) return;
+    const value = raw.replace(/\n+$/, '');
     parts.push(heading, '', escapeMdText(value), '');
   }
 
@@ -2218,41 +2250,51 @@
       }
 
       if (/^###\s*年度计划\s*$/.test(line)) {
-        flush();
-        if (year !== null) {
-          const node = ensureYear(year);
-          target = { lines: [], apply: function (value) { node.plan = value; } };
+        if (year === null) {
+          if (target) target.lines.push(line);
+          return;
         }
+        flush();
+        const node = ensureYear(year);
+        target = { lines: [], apply: function (value) { node.plan = value; } };
         return;
       }
 
       if (/^####\s*月计划\s*$/.test(line)) {
-        flush();
-        if (year !== null && month !== null) {
-          const node = ensureMonth(year, month);
-          target = { lines: [], apply: function (value) { node.plan = value; } };
+        if (year === null || month === null) {
+          if (target) target.lines.push(line);
+          return;
         }
+        flush();
+        const node = ensureMonth(year, month);
+        target = { lines: [], apply: function (value) { node.plan = value; } };
         return;
       }
 
       if (/^####\s*本月收入\s*$/.test(line)) {
-        flush();
-        if (year !== null && month !== null) {
-          const node = ensureMonth(year, month);
-          target = {
-            lines: [],
-            apply: function (value) {
-              node.income = Math.max(0, amountToCents(value));
-            }
-          };
+        if (year === null || month === null) {
+          if (target) target.lines.push(line);
+          return;
         }
+        flush();
+        const node = ensureMonth(year, month);
+        target = {
+          lines: [],
+          apply: function (value) {
+            node.income = Math.max(0, amountToCents(value));
+          }
+        };
         return;
       }
 
       match = /^#####\s*(今日心情|心情|今日天气|天气|今日记录|今日工作记录|值得记住的小事|三件小事|今日小事|今日支出|明日计划|明日工作计划)\s*$/.exec(line);
       if (match) {
+        if (year === null || month === null || day === null) {
+          if (target) target.lines.push(line);
+          return;
+        }
         flush();
-        if (year !== null && month !== null && day !== null) {
+        {
           const node = ensureDay(year, month, day);
           const label = match[1];
           if (label === '今日心情' || label === '心情') {
@@ -2294,11 +2336,8 @@
         return;
       }
 
-      if (/^#{1,6}\s/.test(line)) {
-        flush();
-        return;
-      }
-
+      // 未识别的标题行不结束当前字段：旧文件或手写文件里正文的 # 标题
+      // 若被当作结构丢弃，会导致整段记录在导入时静默丢失。
       if (target) target.lines.push(line);
     });
 
@@ -2344,6 +2383,10 @@
   }
 
   function exportMarkdown() {
+    if (flushVditorEditors()) {
+      dirty = true;
+      editRevision += 1;
+    }
     const isCopy = !!fileHandle;
     const name = isCopy
       ? '人生日历-副本-' + dayStamp() + '.md'
@@ -2361,10 +2404,7 @@
       link.remove();
       setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
 
-      if (!isCopy) {
-        dirty = false;
-        fileName = name;
-      }
+      if (!isCopy && !fileName) fileName = name;
       const stats = countData();
       setNotice((isCopy ? '已下载副本 ' : '已导出 ') + name + ' · ' +
         stats.years + ' 年 · ' + stats.days + ' 天记录', false);
@@ -2461,7 +2501,14 @@
   updateReconnectButton();
 
   refreshStatus();
-  window.addEventListener('hashchange', render);
+  window.addEventListener('hashchange', function () {
+    if (flushVditorEditors()) {
+      dirty = true;
+      editRevision += 1;
+      if (fileHandle) scheduleSync();
+    }
+    render();
+  });
   window.addEventListener('resize', updateWeatherOverlaySize);
   render();
   restoreStoredHandle();
