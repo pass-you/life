@@ -21,8 +21,10 @@
   const colorInput = document.getElementById('colorInput');
   const todayHint = document.getElementById('todayHint');
   const fileStatus = document.getElementById('fileStatus');
-  const importBtn = document.getElementById('importBtn');
+  const openBtn = document.getElementById('openBtn');
+  const saveAsBtn = document.getElementById('saveAsBtn');
   const exportBtn = document.getElementById('exportBtn');
+  const reconnectBtn = document.getElementById('reconnectBtn');
   const fileInput = document.getElementById('fileInput');
 
   /* ---------------- 日期工具 ---------------- */
@@ -171,12 +173,23 @@
     return total;
   }
 
-  /* ---------------- 文件状态 ---------------- */
+  /* ---------------- 文件连接与自动同步 ---------------- */
 
   let dirty = false;
-  let importedName = '';
+  let fileName = '';
+  let fileHandle = null;
+  let pendingHandle = null;
   let noticeText = '';
   let noticeIsError = false;
+  let syncState = 'idle'; // idle | saving | error
+  let syncError = '';
+  let syncTimer = 0;
+  let syncInFlight = false;
+  let syncQueued = false;
+  let editRevision = 0;
+
+  const supportsFsa = typeof window.showOpenFilePicker === 'function' &&
+    typeof window.showSaveFilePicker === 'function';
 
   function countData() {
     let years = 0;
@@ -197,21 +210,123 @@
     return { years: years, days: days };
   }
 
+  function describeFileError(err) {
+    if (!err) return '未知错误';
+    if (err.name === 'NotAllowedError') return '文件权限已失效，请重新选择保存位置';
+    if (err.name === 'NotFoundError') return '文件已被移动或删除';
+    if (err.name === 'QuotaExceededError') return '存储空间不足';
+    return err.message || '写入失败，请重试';
+  }
+
+  function openHandleDb() {
+    return new Promise(function (resolve, reject) {
+      if (!('indexedDB' in window)) {
+        reject(new Error('IndexedDB unavailable'));
+        return;
+      }
+      const request = indexedDB.open('life-calendar', 1);
+      request.onupgradeneeded = function () {
+        if (!request.result.objectStoreNames.contains('handles')) {
+          request.result.createObjectStore('handles');
+        }
+      };
+      request.onsuccess = function () { resolve(request.result); };
+      request.onerror = function () { reject(request.error); };
+    });
+  }
+
+  // 只保存文件句柄，不保存日历内容；用于下次打开页面时恢复连接。
+  async function storeHandle(handle) {
+    try {
+      const db = await openHandleDb();
+      await new Promise(function (resolve, reject) {
+        const tx = db.transaction('handles', 'readwrite');
+        tx.objectStore('handles').put(handle, 'calendar');
+        tx.oncomplete = function () { resolve(); };
+        tx.onerror = function () { reject(tx.error); };
+        tx.onabort = function () { reject(tx.error); };
+      });
+      db.close();
+    } catch (err) {
+      /* 句柄保存失败不影响当前会话的自动同步 */
+    }
+  }
+
+  async function loadStoredHandle() {
+    try {
+      const db = await openHandleDb();
+      const handle = await new Promise(function (resolve, reject) {
+        const tx = db.transaction('handles', 'readonly');
+        const request = tx.objectStore('handles').get('calendar');
+        request.onsuccess = function () { resolve(request.result || null); };
+        request.onerror = function () { reject(request.error); };
+      });
+      db.close();
+      return handle;
+    } catch (err) {
+      return null;
+    }
+  }
+
+  async function clearStoredHandle() {
+    try {
+      const db = await openHandleDb();
+      await new Promise(function (resolve, reject) {
+        const tx = db.transaction('handles', 'readwrite');
+        tx.objectStore('handles').delete('calendar');
+        tx.oncomplete = function () { resolve(); };
+        tx.onerror = function () { reject(tx.error); };
+        tx.onabort = function () { reject(tx.error); };
+      });
+      db.close();
+    } catch (err) {
+      /* 忽略 */
+    }
+  }
+
+  async function writeHandle(handle, text) {
+    const writable = await handle.createWritable();
+    try {
+      await writable.write(text);
+      await writable.close();
+    } catch (err) {
+      try { await writable.abort(); } catch (ignored) { /* 忽略 */ }
+      throw err;
+    }
+  }
+
   function refreshStatus() {
-    fileStatus.classList.toggle('is-error', noticeIsError);
-    fileStatus.classList.toggle('is-dirty', !noticeIsError && dirty);
+    const hasError = noticeIsError || (!noticeText && syncState === 'error');
+    fileStatus.classList.toggle('is-error', hasError);
+    fileStatus.classList.toggle('is-dirty', !hasError && dirty);
 
     if (noticeText) {
       fileStatus.textContent = noticeText;
       return;
     }
-    if (!importedName) {
-      fileStatus.textContent = dirty
-        ? '未命名记录 · 有未导出的修改，请导出 MD'
-        : '尚未导入文件 · 编辑后请导出 MD';
+    if (!supportsFsa) {
+      fileStatus.textContent = '当前浏览器不支持自动同步 · 请用「导出副本」保存';
       return;
     }
-    fileStatus.textContent = importedName + (dirty ? ' · 有未导出的修改' : ' · 已导入');
+    if (fileHandle) {
+      if (syncState === 'saving') {
+        fileStatus.textContent = '正在同步到 ' + fileName + '…';
+        return;
+      }
+      if (syncState === 'error') {
+        fileStatus.textContent = '同步失败：' + syncError;
+        return;
+      }
+      fileStatus.textContent = fileName + (dirty ? ' · 待同步' : ' · 已同步');
+      return;
+    }
+    if (pendingHandle) {
+      fileStatus.textContent = '上次的 ' + pendingHandle.name + ' 待恢复 · 点击「恢复同步」';
+      return;
+    }
+    fileStatus.textContent = dirty
+      ? '未连接文件 · 修改尚未保存，请选择保存位置'
+      : '未连接文件 · 选择保存位置后自动同步';
   }
 
   function setNotice(message, isError) {
@@ -220,17 +335,241 @@
     refreshStatus();
   }
 
+  function updateReconnectButton() {
+    reconnectBtn.hidden = !pendingHandle;
+  }
+
   function markDirty() {
     dirty = true;
+    editRevision += 1;
     noticeText = '';
     noticeIsError = false;
+    if (syncState === 'error') {
+      syncState = 'idle';
+      syncError = '';
+    }
+    if (fileHandle) {
+      scheduleSync();
+    } else {
+      refreshStatus();
+    }
+  }
+
+  function scheduleSync() {
+    if (!fileHandle) {
+      refreshStatus();
+      return;
+    }
+    clearTimeout(syncTimer);
+    syncTimer = setTimeout(function () { syncToFile(); }, 450);
     refreshStatus();
+  }
+
+  async function syncToFile() {
+    if (!fileHandle) return;
+    if (syncInFlight) {
+      syncQueued = true;
+      return;
+    }
+    clearTimeout(syncTimer);
+    syncInFlight = true;
+    syncQueued = false;
+    const revision = editRevision;
+    syncState = 'saving';
+    syncError = '';
+    refreshStatus();
+
+    try {
+      await writeHandle(fileHandle, buildMarkdown());
+      if (editRevision === revision) {
+        dirty = false;
+      } else {
+        syncQueued = true;
+      }
+      syncState = 'idle';
+    } catch (err) {
+      syncState = 'error';
+      syncError = describeFileError(err);
+    } finally {
+      syncInFlight = false;
+      refreshStatus();
+      if (syncQueued) {
+        syncQueued = false;
+        if (syncState !== 'error') syncToFile();
+      }
+    }
+  }
+
+  async function attachHandle(handle, loadContent) {
+    let parsed = null;
+    let needsSync = false;
+
+    if (loadContent) {
+      const file = await handle.getFile();
+      if (file.size > MD_MAX_BYTES) {
+        throw new Error('文件超过 5 MB，无法打开');
+      }
+      const text = await file.text();
+      if (text.trim()) {
+        parsed = parseMarkdown(text);
+      } else {
+        const current = countData();
+        needsSync = current.years > 0 || current.days > 0;
+      }
+    }
+
+    if (parsed) {
+      state.years = parsed.years;
+      if (parsed.color) state.color = parsed.color;
+      applyTheme(state.color);
+    }
+
+    fileHandle = handle;
+    fileName = handle.name;
+    pendingHandle = null;
+    noticeText = '';
+    noticeIsError = false;
+    syncState = 'idle';
+    syncError = '';
+    dirty = needsSync;
+    if (needsSync) editRevision += 1;
+    updateReconnectButton();
+    currentKey = '';
+    render();
+    await storeHandle(handle);
+
+    const stats = countData();
+    setNotice((loadContent ? '已打开 ' : '已连接 ') + fileName + ' · ' +
+      stats.years + ' 年 · ' + stats.days + ' 天记录', false);
+    if (needsSync) scheduleSync();
+  }
+
+  async function chooseSaveLocation() {
+    if (!supportsFsa) {
+      setNotice('当前浏览器不支持自动同步，请使用「导出副本」', true);
+      return;
+    }
+    let handle;
+    try {
+      handle = await window.showSaveFilePicker({
+        suggestedName: fileName || '人生日历.md',
+        types: [{
+          description: 'Markdown',
+          accept: { 'text/markdown': ['.md', '.markdown'] }
+        }]
+      });
+    } catch (err) {
+      if (err && err.name === 'AbortError') return;
+      setNotice('无法选择保存位置：' + describeFileError(err), true);
+      return;
+    }
+    try {
+      await writeHandle(handle, buildMarkdown());
+    } catch (err) {
+      setNotice('无法写入文件：' + describeFileError(err), true);
+      return;
+    }
+    await attachHandle(handle, false);
+  }
+
+  async function openCalendarFile() {
+    if (!supportsFsa) {
+      fileInput.click();
+      return;
+    }
+    if (dirty && !window.confirm('打开文件会替换当前未同步的内容，继续吗？')) return;
+    let handles;
+    try {
+      handles = await window.showOpenFilePicker({
+        multiple: false,
+        types: [{
+          description: 'Markdown',
+          accept: { 'text/markdown': ['.md', '.markdown'], 'text/plain': ['.txt'] }
+        }]
+      });
+    } catch (err) {
+      if (err && err.name === 'AbortError') return;
+      setNotice('无法打开文件：' + describeFileError(err), true);
+      return;
+    }
+    if (!handles || !handles.length) return;
+    try {
+      await attachHandle(handles[0], true);
+    } catch (err) {
+      setNotice(err.message || '打开失败，请确认文件格式', true);
+    }
+  }
+
+  async function reconnectHandle() {
+    if (!pendingHandle) return;
+    const handle = pendingHandle;
+    let permission = 'granted';
+    try {
+      if (typeof handle.requestPermission === 'function') {
+        permission = await handle.requestPermission({ mode: 'readwrite' });
+      }
+    } catch (err) {
+      permission = 'denied';
+    }
+    if (permission !== 'granted') {
+      pendingHandle = null;
+      updateReconnectButton();
+      await clearStoredHandle();
+      setNotice('未获得文件权限，请重新选择文件', true);
+      return;
+    }
+    try {
+      await attachHandle(handle, true);
+    } catch (err) {
+      pendingHandle = null;
+      updateReconnectButton();
+      await clearStoredHandle();
+      setNotice(err.message || '恢复文件失败，请重新选择', true);
+    }
+  }
+
+  async function restoreStoredHandle() {
+    if (!supportsFsa) return;
+    const handle = await loadStoredHandle();
+    if (!handle) return;
+
+    let permission = 'prompt';
+    try {
+      if (typeof handle.queryPermission === 'function') {
+        permission = await handle.queryPermission({ mode: 'readwrite' });
+      }
+    } catch (err) {
+      permission = 'prompt';
+    }
+
+    if (permission === 'granted') {
+      try {
+        await attachHandle(handle, true);
+      } catch (err) {
+        await clearStoredHandle();
+        setNotice(err.message || '恢复文件失败，请重新选择', true);
+      }
+      return;
+    }
+    if (permission === 'prompt') {
+      pendingHandle = handle;
+      updateReconnectButton();
+      refreshStatus();
+      return;
+    }
+    await clearStoredHandle();
   }
 
   window.addEventListener('beforeunload', function (event) {
     if (!dirty) return;
     event.preventDefault();
     event.returnValue = '';
+  });
+
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden && dirty && fileHandle) {
+      syncToFile();
+    }
   });
 
   /* ---------------- 主题色 ---------------- */
@@ -937,25 +1276,32 @@
     return { years: years, color: color, warnings: warnings };
   }
 
-  function importMarkdownFile(file) {
+  function importTextFile(file) {
     if (!file) return;
     if (file.size > MD_MAX_BYTES) {
       setNotice('文件超过 5 MB，无法导入', true);
       return;
     }
-    if (dirty && !window.confirm('导入会替换当前未导出的内容，继续吗？')) return;
+    if (dirty && !window.confirm('导入会替换当前未同步的内容，继续吗？')) return;
 
     file.text().then(function (text) {
       const parsed = parseMarkdown(text);
       state.years = parsed.years;
       if (parsed.color) state.color = parsed.color;
       applyTheme(state.color);
-      dirty = false;
-      importedName = file.name;
+      fileHandle = null;
+      pendingHandle = null;
+      updateReconnectButton();
+      clearStoredHandle();
+      fileName = file.name;
+      dirty = true;
+      editRevision += 1;
+      noticeText = '';
+      noticeIsError = false;
       currentKey = '';
       render();
       const stats = countData();
-      setNotice('已导入 ' + file.name + ' · ' + stats.years + ' 年 · ' + stats.days + ' 天记录' +
+      setNotice('已导入 ' + file.name + ' · 未连接文件，修改需导出' +
         (parsed.warnings ? '，跳过 ' + parsed.warnings + ' 处异常日期' : ''), false);
     }).catch(function (err) {
       setNotice(err && err.message ? err.message : '导入失败，请确认文件格式', true);
@@ -963,7 +1309,10 @@
   }
 
   function exportMarkdown() {
-    const name = importedName || '人生日历-' + dayStamp() + '.md';
+    const isCopy = !!fileHandle;
+    const name = isCopy
+      ? '人生日历-副本-' + dayStamp() + '.md'
+      : (fileName || '人生日历-' + dayStamp() + '.md');
     try {
       const content = buildMarkdown();
       const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
@@ -977,10 +1326,13 @@
       link.remove();
       setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
 
-      dirty = false;
-      importedName = name;
+      if (!isCopy) {
+        dirty = false;
+        fileName = name;
+      }
       const stats = countData();
-      setNotice('已导出 ' + name + ' · ' + stats.years + ' 年 · ' + stats.days + ' 天记录', false);
+      setNotice((isCopy ? '已下载副本 ' : '已导出 ') + name + ' · ' +
+        stats.years + ' 年 · ' + stats.days + ' 天记录', false);
     } catch (err) {
       setNotice('导出失败，请重试', true);
     }
@@ -1047,26 +1399,32 @@
     markDirty();
   });
 
-  importBtn.addEventListener('click', function () {
-    fileInput.click();
-  });
+  openBtn.addEventListener('click', openCalendarFile);
+  saveAsBtn.addEventListener('click', chooseSaveLocation);
+  reconnectBtn.addEventListener('click', reconnectHandle);
+  exportBtn.addEventListener('click', exportMarkdown);
 
   fileInput.addEventListener('change', function () {
     const file = fileInput.files && fileInput.files[0];
     fileInput.value = '';
-    importMarkdownFile(file);
+    importTextFile(file);
   });
-
-  exportBtn.addEventListener('click', exportMarkdown);
 
   document.addEventListener('keydown', function (event) {
     if ((event.ctrlKey || event.metaKey) && (event.key === 's' || event.key === 'S')) {
       event.preventDefault();
-      exportMarkdown();
+      if (fileHandle) syncToFile();
+      else exportMarkdown();
     }
   });
+
+  if (!supportsFsa) {
+    saveAsBtn.hidden = true;
+  }
+  updateReconnectButton();
 
   refreshStatus();
   window.addEventListener('hashchange', render);
   render();
+  restoreStoredHandle();
 })();
