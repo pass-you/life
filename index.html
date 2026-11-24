@@ -30,10 +30,19 @@
       </div>
     </header>
 
+    <div class="filebar">
+      <p id="fileStatus" class="file-status" role="status" aria-live="polite">尚未导入文件 · 编辑后请导出 MD</p>
+      <div class="file-actions">
+        <button type="button" class="btn btn-sm" id="importBtn">导入 MD</button>
+        <button type="button" class="btn btn-sm btn-primary" id="exportBtn">导出 MD</button>
+        <input id="fileInput" type="file" accept=".md,.markdown,.txt,text/markdown" hidden>
+      </div>
+    </div>
+
     <main id="app" tabindex="-1"></main>
 
     <footer class="footer">
-      <span>内容只保存在当前浏览器本地</span>
+      <span>数据只在当前页面与导出的 MD 文件中，关闭前请导出</span>
       <span id="todayHint"></span>
     </footer>
   </div>

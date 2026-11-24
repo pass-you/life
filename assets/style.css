@@ -213,6 +213,59 @@ input:focus-visible {
   cursor: pointer;
 }
 
+/* ---------- 文件栏 ---------- */
+
+.filebar {
+  max-width: 1120px;
+  margin: 6px auto 0;
+  padding: 0 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  flex-wrap: wrap;
+}
+
+.file-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.file-status::before {
+  content: "";
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-line);
+  transition: background 0.2s ease;
+}
+
+.file-status.is-dirty::before {
+  background: var(--accent);
+}
+
+.file-status.is-error {
+  color: #a8473f;
+}
+
+.file-status.is-error::before {
+  background: #b4554c;
+}
+
+.file-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 /* ---------- 主体 ---------- */
 
 main {
@@ -460,6 +513,23 @@ main {
   background: var(--surface);
 }
 
+.btn-sm {
+  padding: 6px 13px;
+  font-size: 12px;
+}
+
+.btn-primary {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+.btn-primary:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
 .stepper {
   display: inline-flex;
   border: 1px solid var(--line);
@@ -598,13 +668,6 @@ main {
   font-size: 14px;
   font-weight: 600;
   letter-spacing: 0.03em;
-}
-
-.save-state {
-  font-size: 11px;
-  color: var(--muted);
-  min-height: 1em;
-  white-space: nowrap;
 }
 
 textarea {
@@ -868,6 +931,10 @@ textarea:focus {
 
   .theme {
     margin-left: auto;
+  }
+
+  .filebar {
+    padding: 0 18px;
   }
 
   main {

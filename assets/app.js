@@ -1,10 +1,9 @@
-/* 人生日历 — 年 / 月 / 日 三级日历，数据保存在 localStorage。 */
+/* 人生日历 — 年 / 月 / 日 三级日历，数据通过 Markdown 文件导入 / 导出。 */
 (function () {
   'use strict';
 
   const MIN_YEAR = 2006;
   const MAX_YEAR = 2106;
-  const STORE_KEY = 'life-calendar:v1';
   const DEFAULT_COLOR = '#e26a8d';
   const PRESETS = [
     { name: '樱粉', color: '#e26a8d' },
@@ -21,6 +20,10 @@
   const swatchEl = document.getElementById('swatches');
   const colorInput = document.getElementById('colorInput');
   const todayHint = document.getElementById('todayHint');
+  const fileStatus = document.getElementById('fileStatus');
+  const importBtn = document.getElementById('importBtn');
+  const exportBtn = document.getElementById('exportBtn');
+  const fileInput = document.getElementById('fileInput');
 
   /* ---------------- 日期工具 ---------------- */
 
@@ -56,27 +59,9 @@
     return { y: nextYear, m: date.getMonth() + 1, d: date.getDate() };
   }
 
-  /* ---------------- 数据存储 ---------------- */
+  /* ---------------- 数据模型 ---------------- */
 
-  function loadState() {
-    try {
-      const raw = localStorage.getItem(STORE_KEY);
-      if (!raw) return null;
-      const parsed = JSON.parse(raw);
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
-      const years = parsed.years && typeof parsed.years === 'object' && !Array.isArray(parsed.years)
-        ? parsed.years
-        : {};
-      const color = typeof parsed.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(parsed.color)
-        ? parsed.color.toLowerCase()
-        : DEFAULT_COLOR;
-      return { color: color, years: years };
-    } catch (err) {
-      return null;
-    }
-  }
-
-  const state = loadState() || { color: DEFAULT_COLOR, years: {} };
+  const state = { color: DEFAULT_COLOR, years: {} };
 
   function yearNode(year, create) {
     const key = String(year);
@@ -186,42 +171,66 @@
     return total;
   }
 
-  let saveTimer = 0;
+  /* ---------------- 文件状态 ---------------- */
 
-  function setSaveState(text) {
-    app.querySelectorAll('[data-save-state]').forEach(function (el) {
-      el.textContent = text;
+  let dirty = false;
+  let importedName = '';
+  let noticeText = '';
+  let noticeIsError = false;
+
+  function countData() {
+    let years = 0;
+    let days = 0;
+    Object.keys(state.years).forEach(function (key) {
+      const node = state.years[key];
+      if (!node || typeof node !== 'object') return;
+      if (yearHasContent(node)) years += 1;
+      const months = node.months && typeof node.months === 'object' ? node.months : {};
+      Object.keys(months).forEach(function (monthKey) {
+        const month = months[monthKey];
+        if (!month || !month.days || typeof month.days !== 'object') return;
+        Object.keys(month.days).forEach(function (dayKey) {
+          if (hasDayContent(month.days[dayKey])) days += 1;
+        });
+      });
     });
+    return { years: years, days: days };
   }
 
-  function persist() {
-    try {
-      localStorage.setItem(STORE_KEY, JSON.stringify(state));
-      return true;
-    } catch (err) {
-      setSaveState('本地存储不可用，未能保存');
-      return false;
+  function refreshStatus() {
+    fileStatus.classList.toggle('is-error', noticeIsError);
+    fileStatus.classList.toggle('is-dirty', !noticeIsError && dirty);
+
+    if (noticeText) {
+      fileStatus.textContent = noticeText;
+      return;
     }
-  }
-
-  function queueSave() {
-    clearTimeout(saveTimer);
-    setSaveState('保存中…');
-    saveTimer = setTimeout(function () {
-      if (persist()) setSaveState('已保存');
-    }, 300);
-  }
-
-  window.addEventListener('beforeunload', function () {
-    clearTimeout(saveTimer);
-    persist();
-  });
-
-  document.addEventListener('visibilitychange', function () {
-    if (document.hidden) {
-      clearTimeout(saveTimer);
-      persist();
+    if (!importedName) {
+      fileStatus.textContent = dirty
+        ? '未命名记录 · 有未导出的修改，请导出 MD'
+        : '尚未导入文件 · 编辑后请导出 MD';
+      return;
     }
+    fileStatus.textContent = importedName + (dirty ? ' · 有未导出的修改' : ' · 已导入');
+  }
+
+  function setNotice(message, isError) {
+    noticeText = message;
+    noticeIsError = !!isError;
+    refreshStatus();
+  }
+
+  function markDirty() {
+    dirty = true;
+    noticeText = '';
+    noticeIsError = false;
+    refreshStatus();
+  }
+
+  window.addEventListener('beforeunload', function (event) {
+    if (!dirty) return;
+    event.preventDefault();
+    event.returnValue = '';
   });
 
   /* ---------------- 主题色 ---------------- */
@@ -269,7 +278,7 @@
     return color;
   }
 
-  function applyTheme(hex, shouldPersist) {
+  function applyTheme(hex) {
     const root = document.documentElement;
     const rgb = hexToRgb(hex);
     root.style.setProperty('--accent', hex);
@@ -286,7 +295,6 @@
     });
 
     state.color = hex;
-    if (shouldPersist) persist();
   }
 
   function buildSwatches() {
@@ -299,7 +307,8 @@
     swatchEl.addEventListener('click', function (event) {
       const btn = event.target.closest('.swatch');
       if (!btn) return;
-      applyTheme(btn.dataset.color, true);
+      applyTheme(btn.dataset.color);
+      markDirty();
     });
   }
 
@@ -331,7 +340,7 @@
     el.value = getValue() || '';
     el.addEventListener('input', function () {
       setValue(el.value);
-      queueSave();
+      markDirty();
     });
   }
 
@@ -505,8 +514,7 @@
         : '<span class="stepper-btn is-disabled">下一年 ›</span>') +
       '</div></div></header>' +
       '<div id="review-slot" class="review-slot"></div>' +
-      '<section class="card"><div class="card-head"><h2>年度计划</h2>' +
-      '<span class="save-state" data-save-state aria-live="polite"></span></div>' +
+      '<section class="card"><div class="card-head"><h2>年度计划</h2></div>' +
       '<textarea id="plan-editor" class="plan-input" rows="7" aria-label="年度计划" ' +
       'placeholder="这一年想完成什么？想成为怎样的人？写下几件最重要的事。"></textarea></section>' +
       '<div class="section-head"><h2>选择月份</h2><p>点击月份，制定月计划并进入每日记录</p></div>' +
@@ -581,8 +589,7 @@
         : '<span class="stepper-btn is-disabled">下月 ›</span>') +
       '</div></div></header>' +
       '<div id="review-slot" class="review-slot"></div>' +
-      '<section class="card"><div class="card-head"><h2>月计划</h2>' +
-      '<span class="save-state" data-save-state aria-live="polite"></span></div>' +
+      '<section class="card"><div class="card-head"><h2>月计划</h2></div>' +
       '<textarea id="plan-editor" class="plan-input" rows="6" aria-label="月计划" ' +
       'placeholder="这个月的重点是什么？想在哪些事情上保持节奏？"></textarea></section>' +
       '<div class="section-head"><h2>选择日期</h2><p>点击某一天，记录当日工作与明日计划</p></div>' +
@@ -633,12 +640,10 @@
       '</div></div></header>' +
       '<div id="review-slot" class="review-slot"></div>' +
       '<div class="day-grid">' +
-      '<section class="card"><div class="card-head"><h2>今日工作记录</h2>' +
-      '<span class="save-state" data-save-state aria-live="polite"></span></div>' +
+      '<section class="card"><div class="card-head"><h2>今日工作记录</h2></div>' +
       '<textarea id="work-editor" rows="10" aria-label="今日工作记录" placeholder="今天做了什么，进展如何，遇到了什么问题……"></textarea>' +
       '</section>' +
-      '<section class="card"><div class="card-head"><h2>明日工作计划</h2>' +
-      '<span class="save-state" data-save-state aria-live="polite"></span></div>' +
+      '<section class="card"><div class="card-head"><h2>明日工作计划</h2></div>' +
       '<textarea id="next-editor" rows="10" aria-label="明日工作计划" placeholder="明天最重要的一件事，以及需要跟进的事……"></textarea>' +
       '</section></div>' +
       '</section>';
@@ -656,6 +661,329 @@
     });
 
     wireReview('day', year, month, day);
+  }
+
+  /* ---------------- Markdown 导入 / 导出 ---------------- */
+
+  const MD_MAX_BYTES = 5 * 1024 * 1024;
+
+  function pad2(value) {
+    return String(value).padStart(2, '0');
+  }
+
+  function dayStamp() {
+    const now = new Date();
+    return now.getFullYear() + '-' + pad2(now.getMonth() + 1) + '-' + pad2(now.getDate());
+  }
+
+  function nowStamp() {
+    const now = new Date();
+    return dayStamp() + ' ' + pad2(now.getHours()) + ':' + pad2(now.getMinutes());
+  }
+
+  // 以 \ 或 # 开头的行可能被误认为章节，导出时转义；导入时还原。
+  function escapeMdText(text) {
+    return String(text).split('\n').map(function (line) {
+      if (line.charAt(0) === '\\' || line.charAt(0) === '#') {
+        return '\\' + line;
+      }
+      return line;
+    }).join('\n');
+  }
+
+  function unescapeMdLine(line) {
+    if (line.slice(0, 2) === '\\\\') return line.slice(1);
+    if (line.slice(0, 2) === '\\#') return line.slice(1);
+    return line;
+  }
+
+  function trimBlankLines(lines) {
+    let start = 0;
+    let end = lines.length;
+    while (start < end && !lines[start].trim()) start += 1;
+    while (end > start && !lines[end - 1].trim()) end -= 1;
+    return lines.slice(start, end);
+  }
+
+  function pushField(parts, heading, text) {
+    const value = String(text == null ? '' : text).trim();
+    if (!value) return;
+    parts.push(heading, '', escapeMdText(value), '');
+  }
+
+  function buildMarkdown() {
+    const parts = [
+      '# 人生日历',
+      '',
+      '> 此文件由「人生日历」生成，可直接导入网站恢复记录。',
+      '',
+      '- 格式版本：1',
+      '- 导出时间：' + nowStamp(),
+      '- 主题色：' + state.color,
+      ''
+    ];
+
+    Object.keys(state.years)
+      .map(Number)
+      .filter(function (year) {
+        return Number.isInteger(year) && year >= MIN_YEAR && year <= MAX_YEAR;
+      })
+      .sort(function (a, b) { return a - b; })
+      .forEach(function (year) {
+        const node = yearNode(year);
+        if (!yearHasContent(node)) return;
+
+        parts.push('## 年度 · ' + year, '');
+        pushField(parts, '### 年度计划', node.plan);
+
+        for (let month = 1; month <= 12; month += 1) {
+          const mNode = monthNode(year, month);
+          if (!monthHasContent(mNode)) continue;
+
+          parts.push('### 月份 · ' + year + '-' + pad2(month), '');
+          pushField(parts, '#### 月计划', mNode.plan);
+
+          Object.keys(mNode.days || {})
+            .map(Number)
+            .filter(function (day) {
+              return Number.isInteger(day) && day >= 1 && day <= daysInMonth(year, month) &&
+                hasDayContent(mNode.days[String(day)]);
+            })
+            .sort(function (a, b) { return a - b; })
+            .forEach(function (day) {
+              const dNode = mNode.days[String(day)];
+              parts.push('#### 日期 · ' + year + '-' + pad2(month) + '-' + pad2(day) +
+                ' · 星期' + weekdayName(year, month, day), '');
+              pushField(parts, '##### 今日工作记录', dNode.work);
+              pushField(parts, '##### 明日工作计划', dNode.next);
+            });
+        }
+      });
+
+    return parts.join('\n').replace(/\n+$/, '') + '\n';
+  }
+
+  function parseMarkdown(source) {
+    const text = String(source).replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
+    const lines = text.split('\n');
+    const years = {};
+    let color = null;
+    let year = null;
+    let month = null;
+    let day = null;
+    let target = null;
+    let recognized = false;
+    let warnings = 0;
+    let inHeader = true;
+
+    function ensureYear(y) {
+      const key = String(y);
+      if (!years[key] || typeof years[key] !== 'object') {
+        years[key] = { plan: '', months: {} };
+      }
+      const node = years[key];
+      if (!node.months || typeof node.months !== 'object') node.months = {};
+      if (typeof node.plan !== 'string') node.plan = '';
+      return node;
+    }
+
+    function ensureMonth(y, m) {
+      const node = ensureYear(y);
+      const key = String(m);
+      if (!node.months[key] || typeof node.months[key] !== 'object') {
+        node.months[key] = { plan: '', days: {} };
+      }
+      const mNode = node.months[key];
+      if (!mNode.days || typeof mNode.days !== 'object') mNode.days = {};
+      if (typeof mNode.plan !== 'string') mNode.plan = '';
+      return mNode;
+    }
+
+    function ensureDay(y, m, d) {
+      const mNode = ensureMonth(y, m);
+      const key = String(d);
+      if (!mNode.days[key] || typeof mNode.days[key] !== 'object') {
+        mNode.days[key] = { work: '', next: '' };
+      }
+      const dNode = mNode.days[key];
+      if (typeof dNode.work !== 'string') dNode.work = '';
+      if (typeof dNode.next !== 'string') dNode.next = '';
+      return dNode;
+    }
+
+    function flush() {
+      if (!target) return;
+      const value = trimBlankLines(target.lines).map(unescapeMdLine).join('\n');
+      const apply = target.apply;
+      target = null;
+      if (value.trim()) apply(value);
+    }
+
+    lines.forEach(function (line) {
+      let match;
+
+      if (inHeader) {
+        if (/^##/.test(line)) {
+          inHeader = false;
+        } else {
+          if (/^#\s*人生日历\s*$/.test(line) || /^-\s*格式版本：/.test(line)) {
+            recognized = true;
+          }
+          match = /^-\s*主题色：\s*(#[0-9a-fA-F]{6})\s*$/.exec(line);
+          if (match) color = match[1].toLowerCase();
+          return;
+        }
+      }
+
+      match = /^##\s*年度\s*[·・]\s*(\d{4})\s*$/.exec(line);
+      if (match) {
+        flush();
+        recognized = true;
+        const y = Number(match[1]);
+        if (y < MIN_YEAR || y > MAX_YEAR) {
+          warnings += 1;
+          year = null;
+          month = null;
+          day = null;
+          return;
+        }
+        year = y;
+        month = null;
+        day = null;
+        ensureYear(y);
+        return;
+      }
+
+      match = /^###\s*月份\s*[·・]\s*(\d{4})-(\d{1,2})\s*$/.exec(line);
+      if (match) {
+        flush();
+        const y = Number(match[1]);
+        const m = Number(match[2]);
+        if (y < MIN_YEAR || y > MAX_YEAR || m < 1 || m > 12) {
+          warnings += 1;
+          month = null;
+          day = null;
+          return;
+        }
+        year = y;
+        month = m;
+        day = null;
+        ensureMonth(y, m);
+        return;
+      }
+
+      match = /^####\s*日期\s*[·・]\s*(\d{4})-(\d{1,2})-(\d{1,2})(?:\s*[·・].*)?\s*$/.exec(line);
+      if (match) {
+        flush();
+        const y = Number(match[1]);
+        const m = Number(match[2]);
+        const d = Number(match[3]);
+        if (y < MIN_YEAR || y > MAX_YEAR || m < 1 || m > 12 ||
+            d < 1 || d > daysInMonth(y, m)) {
+          warnings += 1;
+          day = null;
+          return;
+        }
+        year = y;
+        month = m;
+        day = d;
+        ensureDay(y, m, d);
+        return;
+      }
+
+      if (/^###\s*年度计划\s*$/.test(line)) {
+        flush();
+        if (year !== null) {
+          const node = ensureYear(year);
+          target = { lines: [], apply: function (value) { node.plan = value; } };
+        }
+        return;
+      }
+
+      if (/^####\s*月计划\s*$/.test(line)) {
+        flush();
+        if (year !== null && month !== null) {
+          const node = ensureMonth(year, month);
+          target = { lines: [], apply: function (value) { node.plan = value; } };
+        }
+        return;
+      }
+
+      match = /^#####\s*(今日工作记录|明日工作计划)\s*$/.exec(line);
+      if (match) {
+        flush();
+        if (year !== null && month !== null && day !== null) {
+          const node = ensureDay(year, month, day);
+          const field = match[1] === '今日工作记录' ? 'work' : 'next';
+          target = { lines: [], apply: function (value) { node[field] = value; } };
+        }
+        return;
+      }
+
+      if (/^#{1,6}\s/.test(line)) {
+        flush();
+        return;
+      }
+
+      if (target) target.lines.push(line);
+    });
+
+    flush();
+
+    if (!recognized) {
+      throw new Error('未识别到日历数据：请选择由本站导出的 MD 文件。');
+    }
+
+    return { years: years, color: color, warnings: warnings };
+  }
+
+  function importMarkdownFile(file) {
+    if (!file) return;
+    if (file.size > MD_MAX_BYTES) {
+      setNotice('文件超过 5 MB，无法导入', true);
+      return;
+    }
+    if (dirty && !window.confirm('导入会替换当前未导出的内容，继续吗？')) return;
+
+    file.text().then(function (text) {
+      const parsed = parseMarkdown(text);
+      state.years = parsed.years;
+      if (parsed.color) state.color = parsed.color;
+      applyTheme(state.color);
+      dirty = false;
+      importedName = file.name;
+      currentKey = '';
+      render();
+      const stats = countData();
+      setNotice('已导入 ' + file.name + ' · ' + stats.years + ' 年 · ' + stats.days + ' 天记录' +
+        (parsed.warnings ? '，跳过 ' + parsed.warnings + ' 处异常日期' : ''), false);
+    }).catch(function (err) {
+      setNotice(err && err.message ? err.message : '导入失败，请确认文件格式', true);
+    });
+  }
+
+  function exportMarkdown() {
+    const name = importedName || '人生日历-' + dayStamp() + '.md';
+    try {
+      const content = buildMarkdown();
+      const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = name;
+      link.style.display = 'none';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
+
+      dirty = false;
+      importedName = name;
+      const stats = countData();
+      setNotice('已导出 ' + name + ' · ' + stats.years + ' 年 · ' + stats.days + ' 天记录', false);
+    } catch (err) {
+      setNotice('导出失败，请重试', true);
+    }
   }
 
   /* ---------------- 路由 ---------------- */
@@ -708,19 +1036,37 @@
   /* ---------------- 启动 ---------------- */
 
   buildSwatches();
-  applyTheme(state.color, false);
+  applyTheme(state.color);
 
   const initialDate = new Date();
   todayHint.textContent = '今天 ' + initialDate.getFullYear() + ' 年 ' +
     (initialDate.getMonth() + 1) + ' 月 ' + initialDate.getDate() + ' 日';
 
   colorInput.addEventListener('input', function () {
-    applyTheme(colorInput.value, false);
-  });
-  colorInput.addEventListener('change', function () {
-    applyTheme(colorInput.value, true);
+    applyTheme(colorInput.value);
+    markDirty();
   });
 
+  importBtn.addEventListener('click', function () {
+    fileInput.click();
+  });
+
+  fileInput.addEventListener('change', function () {
+    const file = fileInput.files && fileInput.files[0];
+    fileInput.value = '';
+    importMarkdownFile(file);
+  });
+
+  exportBtn.addEventListener('click', exportMarkdown);
+
+  document.addEventListener('keydown', function (event) {
+    if ((event.ctrlKey || event.metaKey) && (event.key === 's' || event.key === 'S')) {
+      event.preventDefault();
+      exportMarkdown();
+    }
+  });
+
+  refreshStatus();
   window.addEventListener('hashchange', render);
   render();
 })();
