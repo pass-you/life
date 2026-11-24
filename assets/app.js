@@ -78,7 +78,7 @@
       'M19 19l10 10M71 71l10 10M81 19 71 29M29 71 19 81"/></g>' +
       '<circle cx="50" cy="50" r="17"/></svg>';
 
-    let html = '<div class="scene-sky"></div>';
+    let html = '';
 
     if (key === 'sun') {
       html += sun;
@@ -103,24 +103,21 @@
         '<div class="scene-fog"><span></span><span></span><span></span></div>';
     }
 
-    html += '<span class="scene-caption">今日 · ' + item.label + '</span>';
     return html;
   }
 
   function renderWeatherScene(label) {
-    const scene = app.querySelector('#weather-scene');
+    const scene = app.querySelector('#weather-overlay');
     if (!scene) return;
     const item = weatherByLabel(label);
     if (!item) {
       scene.hidden = true;
       scene.removeAttribute('data-weather');
-      scene.removeAttribute('aria-label');
       scene.innerHTML = '';
       return;
     }
     scene.hidden = false;
     scene.dataset.weather = item.icon;
-    scene.setAttribute('aria-label', '今日天气：' + item.label);
     scene.innerHTML = weatherSceneMarkup(item);
   }
 
@@ -1130,7 +1127,8 @@
         weatherIcon(item.icon) + '<span>' + item.label + '</span></button>';
     }).join('');
 
-    app.innerHTML = '<section class="view">' +
+    app.innerHTML = '<section class="view view-day">' +
+      '<div id="weather-overlay" class="weather-overlay" aria-hidden="true" hidden></div>' +
       '<header class="chapter"><div>' +
       '<p class="eyebrow">' + year + ' 年 ' + month + ' 月</p>' +
       '<h1 class="display">' + day + '<span class="unit">日</span></h1>' +
@@ -1146,7 +1144,6 @@
         ? '<a class="stepper-btn" href="#/' + next.y + '/' + next.m + '/' + next.d + '" aria-label="后一天">后一天 ›</a>'
         : '<span class="stepper-btn is-disabled">后一天 ›</span>') +
       '</div></div></header>' +
-      '<div id="weather-scene" class="weather-scene" role="img" hidden></div>' +
       '<div id="review-slot" class="review-slot"></div>' +
       '<div class="day-meta">' +
       '<div class="meta-row">' +
