@@ -314,15 +314,17 @@
     const key = String(month);
     if (!Object.prototype.hasOwnProperty.call(yNode.months, key) || !yNode.months[key]) {
       if (!create) return null;
-      yNode.months[key] = { plan: '', days: {} };
+      yNode.months[key] = { plan: '', income: 0, days: {} };
     }
     const node = yNode.months[key];
     if (typeof node !== 'object' || Array.isArray(node)) {
       if (!create) return null;
-      yNode.months[key] = { plan: '', days: {} };
+      yNode.months[key] = { plan: '', income: 0, days: {} };
       return yNode.months[key];
     }
     if (typeof node.plan !== 'string') node.plan = '';
+    if (typeof node.income !== 'number' || !Number.isFinite(node.income)) node.income = 0;
+    node.income = Math.max(0, Math.round(node.income));
     if (!node.days || typeof node.days !== 'object' || Array.isArray(node.days)) {
       node.days = {};
     }
@@ -335,12 +337,12 @@
     const key = String(day);
     if (!Object.prototype.hasOwnProperty.call(mNode.days, key) || !mNode.days[key]) {
       if (!create) return null;
-      mNode.days[key] = { mood: '', journal: '', highlights: '', next: '' };
+      mNode.days[key] = { mood: '', weather: '', journal: '', highlights: '', next: '', expenses: [] };
     }
     const node = mNode.days[key];
     if (typeof node !== 'object' || Array.isArray(node)) {
       if (!create) return null;
-      mNode.days[key] = { mood: '', journal: '', highlights: '', next: '' };
+      mNode.days[key] = { mood: '', weather: '', journal: '', highlights: '', next: '', expenses: [] };
       return mNode.days[key];
     }
     // 兼容旧文件：work 字段迁移到 journal。
@@ -355,6 +357,15 @@
     if (typeof node.journal !== 'string') node.journal = '';
     if (typeof node.highlights !== 'string') node.highlights = '';
     if (typeof node.next !== 'string') node.next = '';
+    if (!Array.isArray(node.expenses)) node.expenses = [];
+    node.expenses = node.expenses.map(function (item) {
+      return {
+        name: item && typeof item.name === 'string' ? item.name : '',
+        price: item && Number.isFinite(item.price) ? Math.max(0, Math.round(item.price)) : 0
+      };
+    }).filter(function (item) {
+      return !!(item.name || item.price);
+    });
     return node;
   }
 
@@ -370,9 +381,59 @@
 
   function hasDayContent(node) {
     if (!node) return false;
-    return ['mood', 'weather', 'journal', 'highlights', 'next'].some(function (field) {
+    if (['mood', 'weather', 'journal', 'highlights', 'next'].some(function (field) {
       return !!(node[field] || '').trim();
+    })) return true;
+    return Array.isArray(node.expenses) && node.expenses.some(function (item) {
+      return item && (item.name || item.price);
     });
+  }
+
+  function amountToCents(value) {
+    const text = String(value == null ? '' : value).replace(/,/g, '').trim();
+    const match = text.match(/-?\d+(?:\.\d+)?/);
+    if (!match) return 0;
+    const amount = Number(match[0]);
+    return Number.isFinite(amount) ? Math.round(amount * 100) : 0;
+  }
+
+  function centsToYuan(cents) {
+    return (Math.max(0, Math.round(cents || 0)) / 100).toFixed(2);
+  }
+
+  function formatCents(cents) {
+    const value = Math.round(cents || 0);
+    return (value < 0 ? '-¥' : '¥') + (Math.abs(value) / 100).toFixed(2);
+  }
+
+  function parseExpenseLines(value) {
+    const items = [];
+    String(value || '').split('\n').forEach(function (line) {
+      const match = /^\s*-\s*(\d+(?:\.\d{1,2})?)\s*元(?:\s*[·:：]\s*(.*))?\s*$/.exec(line);
+      if (!match) return;
+      const name = (match[2] || '').trim();
+      const price = Math.max(0, Math.round(Number(match[1]) * 100));
+      if (name || price) items.push({ name: name, price: price });
+    });
+    return items;
+  }
+
+  function dayExpenseCents(node) {
+    if (!node || !Array.isArray(node.expenses)) return 0;
+    return node.expenses.reduce(function (sum, item) {
+      return sum + (item && Number.isFinite(item.price) ? item.price : 0);
+    }, 0);
+  }
+
+  function monthExpenseCents(node) {
+    if (!node || !node.days) return 0;
+    return Object.keys(node.days).reduce(function (sum, key) {
+      return sum + dayExpenseCents(node.days[key]);
+    }, 0);
+  }
+
+  function monthIncomeCents(node) {
+    return node && Number.isFinite(node.income) ? node.income : 0;
   }
 
   function countDays(node) {
@@ -385,6 +446,7 @@
   function monthHasContent(node) {
     if (!node) return false;
     if ((node.plan || '').trim()) return true;
+    if (monthIncomeCents(node) > 0) return true;
     if (!node.days) return false;
     return Object.keys(node.days).some(function (key) {
       return hasDayContent(node.days[key]);
@@ -1297,6 +1359,21 @@
     const prevYear = year - 1;
     const nextYear = year + 1;
     const recorded = recordedDaysInYear(year);
+    let yearIncome = 0;
+    let yearExpense = 0;
+    let financeRows = '';
+
+    for (let m = 1; m <= 12; m += 1) {
+      const mNode = monthNode(year, m);
+      const income = monthIncomeCents(mNode);
+      const expense = monthExpenseCents(mNode);
+      yearIncome += income;
+      yearExpense += expense;
+      financeRows += '<tr><th scope="row"><a href="#/' + year + '/' + m + '">' + m +
+        ' 月</a></th><td>' + formatCents(expense) + '</td><td>' +
+        formatCents(income) + '</td></tr>';
+    }
+    const yearNet = yearIncome - yearExpense;
 
     let months = '';
     for (let month = 1; month <= 12; month += 1) {
@@ -1332,6 +1409,18 @@
       '<div id="review-slot" class="review-slot"></div>' +
       '<section class="card"><div class="card-head"><h2>年度计划</h2></div>' +
       '<div class="md-field"><div class="vditor-host" id="year-md-editor"></div></div></section>' +
+      '<section class="card finance-card">' +
+      '<div class="card-head"><h2>年度收支</h2></div>' +
+      '<div class="finance-summary">' +
+      '<div class="finance-stat"><span>总收入</span><strong>' + formatCents(yearIncome) + '</strong></div>' +
+      '<div class="finance-stat"><span>总支出</span><strong>' + formatCents(yearExpense) + '</strong></div>' +
+      '<div class="finance-stat"><span>净收入</span><strong class="' +
+      (yearNet < 0 ? 'is-negative' : '') + '">' + formatCents(yearNet) + '</strong></div>' +
+      '</div>' +
+      '<div class="finance-table-wrap"><table class="finance-table">' +
+      '<thead><tr><th>月份</th><th>支出</th><th>收入</th></tr></thead>' +
+      '<tbody>' + financeRows + '</tbody></table></div>' +
+      '</section>' +
       '<div class="section-head"><h2>选择月份</h2><p>点击月份，制定月计划并进入每日记录</p></div>' +
       '<div class="month-grid">' + months + '</div>' +
       '</section>';
@@ -1345,6 +1434,37 @@
     wireReview('year', year);
   }
 
+  function wireMonthFinance(year, month) {
+    const input = app.querySelector('#month-income');
+    const expenseEl = app.querySelector('#month-expense');
+    const netEl = app.querySelector('#month-net');
+    if (!input || !expenseEl || !netEl) return;
+
+    function update() {
+      const node = monthNode(year, month);
+      const expense = monthExpenseCents(node);
+      const income = monthIncomeCents(node);
+      const net = income - expense;
+      expenseEl.textContent = formatCents(expense);
+      netEl.textContent = formatCents(net);
+      netEl.classList.toggle('is-negative', net < 0);
+    }
+
+    input.addEventListener('input', function () {
+      const node = monthNode(year, month, true);
+      node.income = Math.max(0, amountToCents(input.value));
+      markDirty();
+      update();
+    });
+
+    input.addEventListener('blur', function () {
+      const node = monthNode(year, month, true);
+      input.value = node.income ? (node.income / 100).toFixed(2) : '';
+    });
+
+    update();
+  }
+
   function renderMonth(year, month) {
     document.title = year + ' 年 ' + month + ' 月 · 人生日历';
     setCrumbs([
@@ -1355,9 +1475,22 @@
     const today = new Date();
     const total = daysInMonth(year, month);
     const offset = firstWeekdayIndex(year, month);
-    const recorded = countDays(monthNode(year, month));
+    const mNode = monthNode(year, month);
+    const recorded = countDays(mNode);
     const prev = shiftMonth(year, month, -1);
     const next = shiftMonth(year, month, 1);
+    const monthIncome = monthIncomeCents(mNode);
+    const monthExpense = monthExpenseCents(mNode);
+    const monthNet = monthIncome - monthExpense;
+
+    let financeDays = '';
+    for (let d = 1; d <= total; d += 1) {
+      const cents = dayExpenseCents(mNode && mNode.days ? mNode.days[String(d)] : null);
+      if (cents > 0) {
+        financeDays += '<a class="finance-day" href="#/' + year + '/' + month + '/' + d + '">' +
+          '<span>' + d + ' 日</span><strong>' + formatCents(cents) + '</strong></a>';
+      }
+    }
 
     let cells = '';
     for (let i = 0; i < offset; i += 1) {
@@ -1413,6 +1546,21 @@
       '<div id="review-slot" class="review-slot"></div>' +
       '<section class="card"><div class="card-head"><h2>月计划</h2></div>' +
       '<div class="md-field"><div class="vditor-host" id="month-md-editor"></div></div></section>' +
+      '<section class="card finance-card">' +
+      '<div class="card-head"><h2>本月收支</h2></div>' +
+      '<div class="finance-summary">' +
+      '<label class="finance-income"><span>本月收入</span>' +
+      '<span class="finance-input"><span aria-hidden="true">¥</span>' +
+      '<input id="month-income" type="number" min="0" step="0.01" inputmode="decimal" value="' +
+      (monthIncome ? (monthIncome / 100).toFixed(2) : '') + '" aria-label="本月收入"></span></label>' +
+      '<div class="finance-stat"><span>本月支出</span><strong id="month-expense">' +
+      formatCents(monthExpense) + '</strong></div>' +
+      '<div class="finance-stat"><span>净收入</span><strong id="month-net" class="' +
+      (monthNet < 0 ? 'is-negative' : '') + '">' + formatCents(monthNet) + '</strong></div>' +
+      '</div>' +
+      '<div class="finance-days"><span class="finance-days-label">每日支出</span>' +
+      (financeDays || '<span class="finance-empty">本月暂无支出</span>') +
+      '</div></section>' +
       '<div class="section-head"><h2>选择日期</h2><p>点击某一天，记录今天的生活与明日计划</p></div>' +
       '<div class="calendar"><div class="weekdays">' +
       WEEKDAYS.map(function (w) { return '<span>' + w + '</span>'; }).join('') +
@@ -1425,6 +1573,7 @@
       monthNode(year, month, true).plan = value;
     }, 240, '这个月的重点是什么？想在哪些事情上保持节奏？');
 
+    wireMonthFinance(year, month);
     wireReview('month', year, month);
   }
 
@@ -1444,6 +1593,7 @@
     const node = dayNode(year, month, day);
     const mood = node ? node.mood : '';
     const weather = node ? node.weather : '';
+    const expenseTotal = node ? dayExpenseCents(node) : 0;
 
     const moodButtons = MOODS.map(function (item) {
       const active = mood === item;
@@ -1464,6 +1614,9 @@
       '<h1 class="display">' + day + '<span class="unit">日</span></h1>' +
       '<p class="sub">星期' + weekdayName(year, month, day) + (isToday ? ' · 今天' : '') + '</p></div>' +
       '<div class="chapter-actions">' +
+      '<button type="button" class="expense-entry' + (expenseTotal > 0 ? ' has-expenses' : '') +
+      '" data-expense-open aria-haspopup="dialog" title="记账 · ' + formatCents(expenseTotal) +
+      '" aria-label="记账，今日支出 ' + formatCents(expenseTotal) + '">¥</button>' +
       '<button type="button" class="btn" data-review aria-expanded="false" aria-controls="review-slot"' +
       (prev ? '' : ' disabled') + '>回顾昨天</button>' +
       '<div class="stepper">' +
@@ -1546,6 +1699,155 @@
     }, 180, '明天想先做的一两件事……');
 
     wireReview('day', year, month, day);
+    wireExpenseEntry(year, month, day);
+  }
+
+  function wireExpenseEntry(year, month, day) {
+    const button = app.querySelector('[data-expense-open]');
+    if (!button) return;
+    button.addEventListener('click', function () {
+      openExpenseModal(year, month, day);
+    });
+  }
+
+  function openExpenseModal(year, month, day) {
+    if (document.querySelector('.expense-modal')) return;
+    const node = dayNode(year, month, day, true);
+    if (!node.expenses.length) node.expenses.push({ name: '', price: 0 });
+
+    const overlay = document.createElement('div');
+    overlay.className = 'expense-modal';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-labelledby', 'expense-title');
+    overlay.innerHTML =
+      '<div class="expense-sheet">' +
+      '<div class="expense-head"><div>' +
+      '<p class="eyebrow">记账</p>' +
+      '<h2 id="expense-title">' + year + ' 年 ' + month + ' 月 ' + day + ' 日</h2>' +
+      '<p class="sub">星期' + weekdayName(year, month, day) + '</p>' +
+      '</div><button type="button" class="expense-close" aria-label="关闭记账">×</button></div>' +
+      '<div class="expense-summary"><div><span>今日总支出</span>' +
+      '<strong id="expense-total">' + formatCents(dayExpenseCents(node)) + '</strong></div>' +
+      '<span class="expense-count" id="expense-count">0 笔</span></div>' +
+      '<div class="expense-list" id="expense-list"></div>' +
+      '<button type="button" class="expense-add">＋ 添加一笔</button>' +
+      '<p class="expense-hint">收入在对应月页面填写；记账内容会随日历一起同步。</p>' +
+      '</div>';
+    document.body.appendChild(overlay);
+    document.body.classList.add('modal-open');
+
+    const list = overlay.querySelector('#expense-list');
+    const totalEl = overlay.querySelector('#expense-total');
+    const countEl = overlay.querySelector('#expense-count');
+    const addButton = overlay.querySelector('.expense-add');
+    const closeButton = overlay.querySelector('.expense-close');
+
+    function updateTotals() {
+      totalEl.textContent = formatCents(dayExpenseCents(node));
+      const count = node.expenses.filter(function (item) {
+        return item && (item.name || item.price);
+      }).length;
+      countEl.textContent = count + ' 笔';
+    }
+
+    function renderRows(focusIndex) {
+      if (!node.expenses.length) {
+        list.innerHTML = '<p class="expense-empty">还没有支出，添加第一笔。</p>';
+      } else {
+        list.innerHTML = node.expenses.map(function (item, index) {
+          return '<div class="expense-row" data-index="' + index + '">' +
+            '<input class="expense-name" type="text" value="' + esc(item.name) +
+            '" placeholder="物品名称" aria-label="第 ' + (index + 1) + ' 笔物品名称">' +
+            '<div class="expense-price"><span aria-hidden="true">¥</span>' +
+            '<input class="expense-price-input" type="number" min="0" step="0.01" ' +
+            'inputmode="decimal" value="' + (item.price ? (item.price / 100).toFixed(2) : '') +
+            '" placeholder="0.00" aria-label="第 ' + (index + 1) + ' 笔价格"></div>' +
+            '<button type="button" class="expense-delete" aria-label="删除第 ' + (index + 1) +
+            ' 笔" title="删除">×</button></div>';
+        }).join('');
+      }
+      updateTotals();
+      if (focusIndex !== undefined && focusIndex !== null) {
+        const row = list.querySelector('.expense-row[data-index="' + focusIndex + '"]');
+        if (row) row.querySelector('.expense-name').focus();
+      }
+    }
+
+    function close() {
+      if (!overlay.isConnected) return;
+      node.expenses = node.expenses.map(function (item) {
+        return {
+          name: String(item.name || '').trim(),
+          price: Math.max(0, Math.round(item.price || 0))
+        };
+      }).filter(function (item) {
+        return item.name || item.price;
+      });
+      markDirty();
+      overlay.remove();
+      document.body.classList.remove('modal-open');
+      document.removeEventListener('keydown', onKey);
+      window.removeEventListener('hashchange', close);
+      const entry = app.querySelector('[data-expense-open]');
+      if (entry) {
+        const total = dayExpenseCents(node);
+        entry.classList.toggle('has-expenses', total > 0);
+        entry.title = '记账 · ' + formatCents(total);
+        entry.setAttribute('aria-label', '记账，今日支出 ' + formatCents(total));
+        entry.focus();
+      }
+    }
+
+    function onKey(event) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        close();
+      }
+    }
+
+    list.addEventListener('input', function (event) {
+      const row = event.target.closest('.expense-row');
+      if (!row) return;
+      const item = node.expenses[Number(row.dataset.index)];
+      if (!item) return;
+      if (event.target.classList.contains('expense-name')) {
+        item.name = event.target.value;
+      } else if (event.target.classList.contains('expense-price-input')) {
+        item.price = Math.max(0, amountToCents(event.target.value));
+      }
+      updateTotals();
+      markDirty();
+    });
+
+    list.addEventListener('focusout', function (event) {
+      if (!event.target.classList.contains('expense-price-input')) return;
+      const row = event.target.closest('.expense-row');
+      const item = row ? node.expenses[Number(row.dataset.index)] : null;
+      if (item) event.target.value = item.price ? (item.price / 100).toFixed(2) : '';
+    });
+
+    list.addEventListener('click', function (event) {
+      const button = event.target.closest('.expense-delete');
+      if (!button) return;
+      const row = button.closest('.expense-row');
+      node.expenses.splice(Number(row.dataset.index), 1);
+      renderRows();
+      markDirty();
+    });
+
+    addButton.addEventListener('click', function () {
+      node.expenses.push({ name: '', price: 0 });
+      renderRows(node.expenses.length - 1);
+      markDirty();
+    });
+    closeButton.addEventListener('click', close);
+    overlay.addEventListener('click', function (event) {
+      if (event.target === overlay) close();
+    });
+    document.addEventListener('keydown', onKey);
+    window.addEventListener('hashchange', close);
+    renderRows(0);
   }
 
   /* ---------------- Markdown 导入 / 导出 ---------------- */
@@ -1602,7 +1904,7 @@
       '',
       '> 此文件由「人生日历」生成，可直接导入网站恢复记录。',
       '',
-      '- 格式版本：3',
+      '- 格式版本：4',
       '- 导出时间：' + nowStamp(),
       '- 主题色：' + state.color,
       ''
@@ -1627,6 +1929,7 @@
 
           parts.push('### 月份 · ' + year + '-' + pad2(month), '');
           pushField(parts, '#### 月计划', mNode.plan);
+          pushField(parts, '#### 本月收入', mNode.income > 0 ? centsToYuan(mNode.income) : '');
 
           Object.keys(mNode.days || {})
             .map(Number)
@@ -1643,6 +1946,13 @@
               pushField(parts, '##### 今日天气', dNode.weather);
               pushField(parts, '##### 今日记录', dNode.journal);
               pushField(parts, '##### 值得记住的小事', dNode.highlights);
+              const expenseLines = (dNode.expenses || []).filter(function (item) {
+                return item && (item.name || item.price);
+              }).map(function (item) {
+                return '- ' + centsToYuan(item.price) + ' 元' +
+                  (item.name ? ' · ' + item.name : '');
+              }).join('\n');
+              pushField(parts, '##### 今日支出', expenseLines);
               pushField(parts, '##### 明日计划', dNode.next);
             });
         }
@@ -1679,11 +1989,13 @@
       const node = ensureYear(y);
       const key = String(m);
       if (!node.months[key] || typeof node.months[key] !== 'object') {
-        node.months[key] = { plan: '', days: {} };
+        node.months[key] = { plan: '', income: 0, days: {} };
       }
       const mNode = node.months[key];
       if (!mNode.days || typeof mNode.days !== 'object') mNode.days = {};
       if (typeof mNode.plan !== 'string') mNode.plan = '';
+      if (typeof mNode.income !== 'number' || !Number.isFinite(mNode.income)) mNode.income = 0;
+      mNode.income = Math.max(0, Math.round(mNode.income));
       return mNode;
     }
 
@@ -1691,7 +2003,7 @@
       const mNode = ensureMonth(y, m);
       const key = String(d);
       if (!mNode.days[key] || typeof mNode.days[key] !== 'object') {
-        mNode.days[key] = { mood: '', journal: '', highlights: '', next: '' };
+        mNode.days[key] = { mood: '', weather: '', journal: '', highlights: '', next: '', expenses: [] };
       }
       const dNode = mNode.days[key];
       if (typeof dNode.work === 'string') {
@@ -1703,6 +2015,13 @@
       if (typeof dNode.journal !== 'string') dNode.journal = '';
       if (typeof dNode.highlights !== 'string') dNode.highlights = '';
       if (typeof dNode.next !== 'string') dNode.next = '';
+      if (!Array.isArray(dNode.expenses)) dNode.expenses = [];
+      dNode.expenses = dNode.expenses.map(function (item) {
+        return {
+          name: item && typeof item.name === 'string' ? item.name : '',
+          price: item && Number.isFinite(item.price) ? Math.max(0, Math.round(item.price)) : 0
+        };
+      }).filter(function (item) { return !!(item.name || item.price); });
       return dNode;
     }
 
@@ -1804,7 +2123,21 @@
         return;
       }
 
-      match = /^#####\s*(今日心情|心情|今日天气|天气|今日记录|今日工作记录|值得记住的小事|三件小事|今日小事|明日计划|明日工作计划)\s*$/.exec(line);
+      if (/^####\s*本月收入\s*$/.test(line)) {
+        flush();
+        if (year !== null && month !== null) {
+          const node = ensureMonth(year, month);
+          target = {
+            lines: [],
+            apply: function (value) {
+              node.income = Math.max(0, amountToCents(value));
+            }
+          };
+        }
+        return;
+      }
+
+      match = /^#####\s*(今日心情|心情|今日天气|天气|今日记录|今日工作记录|值得记住的小事|三件小事|今日小事|今日支出|明日计划|明日工作计划)\s*$/.exec(line);
       if (match) {
         flush();
         if (year !== null && month !== null && day !== null) {
@@ -1831,6 +2164,11 @@
                   return item.label === text;
                 }) ? text : '';
               }
+            };
+          } else if (label === '今日支出') {
+            target = {
+              lines: [],
+              apply: function (value) { node.expenses = parseExpenseLines(value); }
             };
           } else {
             let field = 'next';
