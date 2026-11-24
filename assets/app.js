@@ -14,6 +14,7 @@
     { name: '麦金', color: '#b4912f' }
   ];
   const WEEKDAYS = ['一', '二', '三', '四', '五', '六', '日'];
+  const MOODS = ['很好', '不错', '一般', '有点累', '低落'];
 
   const app = document.getElementById('app');
   const crumbsEl = document.getElementById('crumbs');
@@ -111,15 +112,24 @@
     const key = String(day);
     if (!Object.prototype.hasOwnProperty.call(mNode.days, key) || !mNode.days[key]) {
       if (!create) return null;
-      mNode.days[key] = { work: '', next: '' };
+      mNode.days[key] = { mood: '', journal: '', highlights: '', next: '' };
     }
     const node = mNode.days[key];
     if (typeof node !== 'object' || Array.isArray(node)) {
       if (!create) return null;
-      mNode.days[key] = { work: '', next: '' };
+      mNode.days[key] = { mood: '', journal: '', highlights: '', next: '' };
       return mNode.days[key];
     }
-    if (typeof node.work !== 'string') node.work = '';
+    // 兼容旧文件：work 字段迁移到 journal。
+    if (typeof node.work === 'string') {
+      if (typeof node.journal !== 'string' || !node.journal) {
+        node.journal = node.work;
+      }
+      delete node.work;
+    }
+    if (typeof node.mood !== 'string') node.mood = '';
+    if (typeof node.journal !== 'string') node.journal = '';
+    if (typeof node.highlights !== 'string') node.highlights = '';
     if (typeof node.next !== 'string') node.next = '';
     return node;
   }
@@ -135,7 +145,10 @@
   };
 
   function hasDayContent(node) {
-    return !!node && (!!(node.work || '').trim() || !!(node.next || '').trim());
+    if (!node) return false;
+    return ['mood', 'journal', 'highlights', 'next'].some(function (field) {
+      return !!(node[field] || '').trim();
+    });
   }
 
   function countDays(node) {
@@ -723,21 +736,37 @@
         '<p class="review-empty">2006 年 1 月 1 日是最早的一天。</p></aside>';
     }
     const node = dayNode(prevDay.y, prevDay.m, prevDay.d);
-    const work = node ? (node.work || '').trim() : '';
+    const mood = node ? (node.mood || '').trim() : '';
+    const journal = node ? (node.journal || '').trim() : '';
+    const highlights = node ? (node.highlights || '').trim() : '';
     const plan = node ? (node.next || '').trim() : '';
+    let blocks = '';
+    if (mood) {
+      blocks += '<div class="review-block"><h4>心情</h4><p class="review-body">' +
+        esc(mood) + '</p></div>';
+    }
+    if (journal) {
+      blocks += '<div class="review-block"><h4>今日记录</h4><p class="review-body">' +
+        esc(journal) + '</p></div>';
+    }
+    if (highlights) {
+      blocks += '<div class="review-block"><h4>值得记住的小事</h4><p class="review-body">' +
+        esc(highlights) + '</p></div>';
+    }
+    if (plan) {
+      blocks += '<div class="review-block"><h4>当时写下的明日计划</h4><p class="review-body">' +
+        esc(plan) + '</p></div>';
+    }
+    if (!blocks) {
+      blocks = '<p class="review-empty">这一天没有记录。</p>';
+    }
     return '<aside class="review" aria-label="' + prevDay.y + ' 年 ' + prevDay.m + ' 月 ' +
       prevDay.d + ' 日记录">' +
       '<div class="review-head"><h3>' + prevDay.y + ' 年 ' + prevDay.m + ' 月 ' +
       prevDay.d + ' 日 · 前一天</h3>' +
       '<a class="review-link" href="#/' + prevDay.y + '/' + prevDay.m + '/' + prevDay.d +
       '">前往这一天</a></div>' +
-      '<div class="review-grid">' +
-      '<div><h4>工作记录</h4>' +
-      (work ? '<p class="review-body">' + esc(work) + '</p>' : '<p class="review-empty">没有记录。</p>') +
-      '</div>' +
-      '<div><h4>当时写下的明日计划</h4>' +
-      (plan ? '<p class="review-body">' + esc(plan) + '</p>' : '<p class="review-empty">没有记录。</p>') +
-      '</div></div></aside>';
+      blocks + '</aside>';
   }
 
   function wireReview(kind, year, month, day) {
@@ -892,12 +921,17 @@
       const node = dayNode(year, month, day);
       let preview = '';
       if (node) {
-        const work = (node.work || '').trim();
+        const journal = (node.journal || '').trim();
+        const highlights = (node.highlights || '').trim();
+        const mood = (node.mood || '').trim();
         const plan = (node.next || '').trim();
-        preview = work || (plan ? '明日：' + plan : '');
+        if (journal) preview = journal;
+        else if (highlights) preview = highlights.replace(/\n+/g, ' · ');
+        else if (mood) preview = '心情：' + mood;
+        else if (plan) preview = '明日：' + plan;
       }
       preview = preview.replace(/\s+/g, ' ').slice(0, 80);
-      const has = !!preview;
+      const has = hasDayContent(node);
       const isToday = today.getFullYear() === year && today.getMonth() + 1 === month &&
         today.getDate() === day;
       const weekday = weekdayName(year, month, day);
@@ -907,7 +941,7 @@
         ' aria-label="' + year + ' 年 ' + month + ' 月 ' + day + ' 日，星期' + weekday +
         (has ? '，有记录' : '') + '">' +
         '<span class="day-num">' + day + '</span>' +
-        (has ? '<span class="day-preview">' + esc(preview) + '</span>' : '') +
+        (has && preview ? '<span class="day-preview">' + esc(preview) + '</span>' : '') +
         '</a>';
     }
 
@@ -931,7 +965,7 @@
       '<section class="card"><div class="card-head"><h2>月计划</h2></div>' +
       '<textarea id="plan-editor" class="plan-input" rows="6" aria-label="月计划" ' +
       'placeholder="这个月的重点是什么？想在哪些事情上保持节奏？"></textarea></section>' +
-      '<div class="section-head"><h2>选择日期</h2><p>点击某一天，记录当日工作与明日计划</p></div>' +
+      '<div class="section-head"><h2>选择日期</h2><p>点击某一天，记录今天的生活与明日计划</p></div>' +
       '<div class="calendar"><div class="weekdays">' +
       WEEKDAYS.map(function (w) { return '<span>' + w + '</span>'; }).join('') +
       '</div><div class="days">' + cells + '</div></div>' +
@@ -960,6 +994,13 @@
     const prev = shiftDay(year, month, day, -1);
     const next = shiftDay(year, month, day, 1);
     const node = dayNode(year, month, day);
+    const mood = node ? node.mood : '';
+
+    const moodButtons = MOODS.map(function (item) {
+      const active = mood === item;
+      return '<button type="button" class="mood-chip' + (active ? ' is-active' : '') +
+        '" data-mood="' + item + '" aria-pressed="' + active + '">' + item + '</button>';
+    }).join('');
 
     app.innerHTML = '<section class="view">' +
       '<header class="chapter"><div>' +
@@ -978,19 +1019,52 @@
         : '<span class="stepper-btn is-disabled">后一天 ›</span>') +
       '</div></div></header>' +
       '<div id="review-slot" class="review-slot"></div>' +
-      '<div class="day-grid">' +
-      '<section class="card"><div class="card-head"><h2>今日工作记录</h2></div>' +
-      '<textarea id="work-editor" rows="10" aria-label="今日工作记录" placeholder="今天做了什么，进展如何，遇到了什么问题……"></textarea>' +
+      '<div class="mood-bar">' +
+      '<span class="mood-label">今天感觉怎么样？</span>' +
+      '<div class="mood-options" role="group" aria-label="今日心情">' + moodButtons + '</div>' +
+      '</div>' +
+      '<section class="card journal-card">' +
+      '<div class="card-head"><h2>今日记录</h2></div>' +
+      '<textarea id="journal-editor" rows="9" aria-label="今日记录" ' +
+      'placeholder="工作、学习、生活、见闻、心情……今天发生了什么？"></textarea>' +
       '</section>' +
-      '<section class="card"><div class="card-head"><h2>明日工作计划</h2></div>' +
-      '<textarea id="next-editor" rows="10" aria-label="明日工作计划" placeholder="明天最重要的一件事，以及需要跟进的事……"></textarea>' +
+      '<div class="day-grid">' +
+      '<section class="card"><div class="card-head"><h2>值得记住的小事</h2></div>' +
+      '<textarea id="highlights-editor" rows="4" aria-label="值得记住的小事" ' +
+      'placeholder="每行一件，比如早起散步、读完一章书、和朋友吃饭。"></textarea>' +
+      '</section>' +
+      '<section class="card"><div class="card-head"><h2>明日计划</h2>' +
+      '<span class="card-hint">简单写就好</span></div>' +
+      '<textarea id="next-editor" rows="4" aria-label="明日计划" ' +
+      'placeholder="明天想先做的一两件事……"></textarea>' +
       '</section></div>' +
       '</section>';
 
-    bindEditor('#work-editor', function () {
-      return node ? node.work : '';
+    const chips = app.querySelectorAll('.mood-chip');
+    Array.prototype.forEach.call(chips, function (btn) {
+      btn.addEventListener('click', function () {
+        const current = dayNode(year, month, day, true);
+        const nextMood = current.mood === btn.dataset.mood ? '' : btn.dataset.mood;
+        current.mood = nextMood;
+        Array.prototype.forEach.call(chips, function (chip) {
+          const active = chip.dataset.mood === nextMood;
+          chip.classList.toggle('is-active', active);
+          chip.setAttribute('aria-pressed', String(active));
+        });
+        markDirty();
+      });
+    });
+
+    bindEditor('#journal-editor', function () {
+      return node ? node.journal : '';
     }, function (value) {
-      dayNode(year, month, day, true).work = value;
+      dayNode(year, month, day, true).journal = value;
+    });
+
+    bindEditor('#highlights-editor', function () {
+      return node ? node.highlights : '';
+    }, function (value) {
+      dayNode(year, month, day, true).highlights = value;
     });
 
     bindEditor('#next-editor', function () {
@@ -1056,7 +1130,7 @@
       '',
       '> 此文件由「人生日历」生成，可直接导入网站恢复记录。',
       '',
-      '- 格式版本：1',
+      '- 格式版本：2',
       '- 导出时间：' + nowStamp(),
       '- 主题色：' + state.color,
       ''
@@ -1093,8 +1167,10 @@
               const dNode = mNode.days[String(day)];
               parts.push('#### 日期 · ' + year + '-' + pad2(month) + '-' + pad2(day) +
                 ' · 星期' + weekdayName(year, month, day), '');
-              pushField(parts, '##### 今日工作记录', dNode.work);
-              pushField(parts, '##### 明日工作计划', dNode.next);
+              pushField(parts, '##### 今日心情', dNode.mood);
+              pushField(parts, '##### 今日记录', dNode.journal);
+              pushField(parts, '##### 值得记住的小事', dNode.highlights);
+              pushField(parts, '##### 明日计划', dNode.next);
             });
         }
       });
@@ -1142,10 +1218,16 @@
       const mNode = ensureMonth(y, m);
       const key = String(d);
       if (!mNode.days[key] || typeof mNode.days[key] !== 'object') {
-        mNode.days[key] = { work: '', next: '' };
+        mNode.days[key] = { mood: '', journal: '', highlights: '', next: '' };
       }
       const dNode = mNode.days[key];
-      if (typeof dNode.work !== 'string') dNode.work = '';
+      if (typeof dNode.work === 'string') {
+        if (!dNode.journal) dNode.journal = dNode.work;
+        delete dNode.work;
+      }
+      if (typeof dNode.mood !== 'string') dNode.mood = '';
+      if (typeof dNode.journal !== 'string') dNode.journal = '';
+      if (typeof dNode.highlights !== 'string') dNode.highlights = '';
       if (typeof dNode.next !== 'string') dNode.next = '';
       return dNode;
     }
@@ -1248,13 +1330,30 @@
         return;
       }
 
-      match = /^#####\s*(今日工作记录|明日工作计划)\s*$/.exec(line);
+      match = /^#####\s*(今日心情|心情|今日记录|今日工作记录|值得记住的小事|三件小事|今日小事|明日计划|明日工作计划)\s*$/.exec(line);
       if (match) {
         flush();
         if (year !== null && month !== null && day !== null) {
           const node = ensureDay(year, month, day);
-          const field = match[1] === '今日工作记录' ? 'work' : 'next';
-          target = { lines: [], apply: function (value) { node[field] = value; } };
+          const label = match[1];
+          if (label === '今日心情' || label === '心情') {
+            target = {
+              lines: [],
+              apply: function (value) {
+                const first = trimBlankLines(String(value).split('\n'))
+                  .map(unescapeMdLine)[0];
+                const text = (first || '').trim();
+                node.mood = MOODS.indexOf(text) >= 0 ? text : '';
+              }
+            };
+          } else {
+            let field = 'next';
+            if (label === '今日记录' || label === '今日工作记录') field = 'journal';
+            else if (label === '值得记住的小事' || label === '三件小事' || label === '今日小事') {
+              field = 'highlights';
+            }
+            target = { lines: [], apply: function (value) { node[field] = value; } };
+          }
         }
         return;
       }
