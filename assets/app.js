@@ -121,7 +121,7 @@
       overlay.classList.add('is-striking');
       window.setTimeout(function () { overlay.classList.remove('is-striking'); }, 900);
       scheduleStormStrike(false);
-    }, first ? 4000 + Math.random() * 3000 : 10000 + Math.random() * 8000);
+    }, first ? 2500 + Math.random() * 2000 : 5000 + Math.random() * 3000);
   }
 
   function sceneSnowFeatures() {
