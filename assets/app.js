@@ -52,12 +52,15 @@
   function sceneParticles(count, type) {
     let out = '';
     for (let i = 0; i < count; i += 1) {
+      let duration;
+      if (type === 'snow') duration = 8 + Math.random() * 5;
+      else if (type === 'heavyRain') duration = 1.15 + Math.random() * 0.5;
+      else duration = 1.6 + Math.random() * 0.8;
+
       const style = '--x:' + (Math.random() * 100).toFixed(1) + '%;' +
-        '--delay:-' + (Math.random() * 6).toFixed(2) + 's;' +
-        '--dur:' + (type === 'snow'
-          ? (6 + Math.random() * 4).toFixed(2)
-          : (0.9 + Math.random() * 0.7).toFixed(2)) + 's' +
-        (type === 'snow' ? ';--size:' + (3 + Math.random() * 3).toFixed(1) + 'px' : '');
+        '--delay:-' + (Math.random() * 8).toFixed(2) + 's;' +
+        '--dur:' + duration.toFixed(2) + 's' +
+        (type === 'snow' ? ';--size:' + (2.4 + Math.random() * 2.4).toFixed(1) + 'px' : '');
       out += '<span style="' + style + '"></span>';
     }
     return out;
@@ -73,10 +76,7 @@
 
   function weatherSceneMarkup(item) {
     const key = item.icon;
-    const sun = '<svg class="scene-sun" viewBox="0 0 100 100" aria-hidden="true">' +
-      '<g class="sun-rays"><path d="M50 6v14M50 80v14M6 50h14M80 50h14' +
-      'M19 19l10 10M71 71l10 10M81 19 71 29M29 71 19 81"/></g>' +
-      '<circle cx="50" cy="50" r="17"/></svg>';
+    const sun = '<div class="scene-sun" aria-hidden="true"></div>';
 
     let html = '';
 
@@ -87,17 +87,17 @@
     } else if (key === 'cloud') {
       html += sceneClouds(3);
     } else if (key === 'rain') {
-      html += sceneClouds(2) + '<div class="scene-rain">' + sceneParticles(22, 'rain') + '</div>';
+      html += sceneClouds(2) + '<div class="scene-rain">' + sceneParticles(16, 'rain') + '</div>';
     } else if (key === 'heavyRain') {
-      html += sceneClouds(3) + '<div class="scene-rain">' + sceneParticles(36, 'rain') + '</div>';
+      html += sceneClouds(3) + '<div class="scene-rain">' + sceneParticles(26, 'heavyRain') + '</div>';
     } else if (key === 'storm') {
       html += sceneClouds(3) +
-        '<div class="scene-rain">' + sceneParticles(30, 'rain') + '</div>' +
+        '<div class="scene-rain">' + sceneParticles(20, 'rain') + '</div>' +
         '<svg class="scene-lightning" viewBox="0 0 40 60" aria-hidden="true">' +
-        '<path d="M22 2 6 34h13l-3 24 18-32H21l1-24Z"/></svg>' +
+        '<path d="M22 4 10 31h8l-3 22 13-27h-7l1-22"/></svg>' +
         '<div class="scene-flash"></div>';
     } else if (key === 'snow') {
-      html += sceneClouds(2) + '<div class="scene-snow">' + sceneParticles(20, 'snow') + '</div>';
+      html += sceneClouds(2) + '<div class="scene-snow">' + sceneParticles(16, 'snow') + '</div>';
     } else if (key === 'fog') {
       html += sceneClouds(1) +
         '<div class="scene-fog"><span></span><span></span><span></span></div>';
