@@ -2456,11 +2456,11 @@ body.modal-open {
 /* ---------- 找电影 ---------- */
 
 .film-entry svg {
-  width: 17px;
-  height: 17px;
+  width: 14px;
+  height: 14px;
   fill: none;
   stroke: currentColor;
-  stroke-width: 1.5;
+  stroke-width: 1.7;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
