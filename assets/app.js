@@ -15,12 +15,12 @@
   ];
   const WEEKDAYS = ['一', '二', '三', '四', '五', '六', '日'];
   const MOODS = ['很好', '不错', '一般', '有点累', '低落'];
-  const MOVIE_GENRES = ['全部', '喜剧', '爱情', '动作', '科幻', '动画', '悬疑', '惊悚', '恐怖',
-    '犯罪', '同性', '音乐', '歌舞', '传记', '历史', '战争', '西部', '奇幻', '冒险', '灾难',
-    '武侠', '情色', '剧情'];
-  const MOVIE_REGIONS = ['全部', '华语', '欧美', '韩国', '日本', '中国大陆', '美国', '中国香港',
-    '中国台湾', '英国', '法国', '德国', '意大利', '西班牙', '印度', '泰国', '俄罗斯', '加拿大',
-    '澳大利亚', '爱尔兰', '瑞典', '巴西', '丹麦'];
+  // 类型 / 地区 / 排序都是 TMDB 的官方口径，找电影直接按这些参数查全库。
+  const MOVIE_GENRES = ['全部', '动作', '冒险', '动画', '喜剧', '犯罪', '纪录', '剧情',
+    '家庭', '奇幻', '历史', '恐怖', '音乐', '悬疑', '爱情', '科幻', '惊悚', '战争', '西部'];
+  const MOVIE_REGIONS = ['全部', '华语', '中国大陆', '中国香港', '中国台湾', '美国', '日本',
+    '韩国', '英国', '法国', '德国', '意大利', '西班牙', '印度', '泰国', '俄罗斯', '加拿大',
+    '澳大利亚', '欧美'];
   const MOVIE_DECADES = [
     { label: '全部' },
     { label: '2020年代', from: 2020, to: 2029 },
@@ -34,23 +34,26 @@
     { label: '更早', from: 1900, to: 1949 }
   ];
   const MOVIE_SORTS = [
-    { value: 'U', label: '综合排序' },
-    { value: 'S', label: '评分最高' },
-    { value: 'R', label: '评价人数' },
-    { value: 'T', label: '最新上映' }
+    { value: 'popularity.desc', label: '综合排序' },
+    { value: 'vote_average.desc', label: '评分最高' },
+    { value: 'vote_count.desc', label: '评价人数' },
+    { value: 'primary_release_date.desc', label: '最新上映' }
   ];
-  // 「想看的电影」「看过的电影」在本地排序，选项与豆瓣排序不同。
+  // 「想看的电影」「看过的电影」在本地排序。
   const LIBRARY_SORTS = [
     { value: 'added', label: '收藏时间' },
     { value: 'rating', label: '评分最高' },
     { value: 'year', label: '上映年份' },
     { value: 'title', label: '片名' }
   ];
-  // 清单里的地区筛选用条目自带的地区字段，「华语」「欧美」按豆瓣的口径展开。
+  // 清单里的地区筛选用条目自带的地区字段，「华语」「欧美」按同一口径展开。
   const REGION_GROUPS = {
-    '华语': ['中国大陆', '中国香港', '中国台湾', '香港', '台湾', '澳门', '中国'],
+    '华语': ['中国大陆', '中国香港', '中国台湾', '香港', '台湾', '澳门', '中国', 'China',
+      'Hong Kong', 'Taiwan'],
     '欧美': ['美国', '英国', '法国', '德国', '意大利', '西班牙', '加拿大', '澳大利亚',
-      '爱尔兰', '瑞典', '丹麦', '荷兰', '俄罗斯', '波兰', '奥地利', '比利时']
+      '爱尔兰', '瑞典', '丹麦', '荷兰', '俄罗斯', '波兰', '奥地利', '比利时',
+      'United States of America', 'United Kingdom', 'France', 'Germany', 'Italy', 'Spain',
+      'Canada', 'Australia', 'Ireland', 'Sweden', 'Denmark', 'Netherlands', 'Russia']
   };
 
   const WEATHERS = [
@@ -420,7 +423,7 @@
   }
 
   // 类型 / 地区用来在「想看的电影」「看过的电影」里做与找电影一致的筛选。
-  // 列表接口不返回这两个字段，收藏时会异步用豆瓣条目补齐，存进 MD 一起保存。
+  // 列表接口不返回这两个字段，收藏时会异步用 TMDB 条目补齐，存进 MD 一起保存。
   function normalizeTagList(value, limit) {
     const list = Array.isArray(value) ? value : (typeof value === 'string' ? value.split(/[\/、,]/) : []);
     const out = [];
@@ -529,7 +532,7 @@
     return items;
   }
 
-  // MD 里的电影行：- 片名 · 年份 · 评分 · 豆瓣 id · 加入日期 · 海报地址
+  // MD 里的电影行：- 片名 · 年份 · 评分 · TMDB id · 加入日期 · 海报地址
   // 尾部可选字段从后往前剥离，标题里带「·」也能原样还原。
   function parseMovieLine(line, fallbackDate) {
     const text = String(line || '').replace(/^\s*-\s*/, '').replace(/\s+$/, '');
@@ -548,7 +551,7 @@
     }
     if (parts.length > 1 && /^https?:\/\/\S+$/.test(parts[parts.length - 1])) item.cover = parts.pop();
     if (parts.length > 1 && /^\d{4}-\d{2}-\d{2}$/.test(parts[parts.length - 1])) item.added = parts.pop();
-    if (parts.length > 1 && /^\d{5,}$/.test(parts[parts.length - 1])) item.id = parts.pop();
+    if (parts.length > 1 && /^(?:tt\d{3,}|\d{5,})$/.test(parts[parts.length - 1])) item.id = parts.pop();
     // 评分只会是 0-10 的一位小数（如 9.2、8），4 位纯数字是年份，不能当评分吃掉。
     if (parts.length > 1 && /^\d{1,2}(?:\.\d)?$/.test(parts[parts.length - 1])) {
       item.rating = Number(parts.pop()) || 0;
@@ -2193,10 +2196,6 @@
 
   /* ---------------- 找电影 ---------------- */
 
-  function movieDoubanUrl(id) {
-    return id ? 'https://movie.douban.com/subject/' + encodeURIComponent(id) + '/' : '';
-  }
-
   // 打开日页面时顺手把「找电影」的首屏拉进内存：用户点胶片按钮时列表已经就绪。
   // 整个会话只做一次，用空闲时段发起，不抢首屏渲染。
   let movieWarmed = false;
@@ -2224,13 +2223,15 @@
   function openMovieModal(year, month, day) {
     if (document.querySelector('.expense-modal')) return;
     const node = dayNode(year, month, day, true);
-    const filters = { genre: '全部', region: '全部', decade: '全部', sort: 'U', query: '' };
-    const MOVIE_PAGE = 20;   // 豆瓣列表每页固定 20 条
+    const filters = {
+      genre: '全部', region: '全部', decade: '全部', sort: 'popularity.desc', query: ''
+    };
     const feed = {
       online: null,
       items: [],
       known: {},
-      start: 0,
+      page: 1,
+      totalPages: 0,
       hasMore: true,
       loading: false,
       token: 0,
@@ -2282,36 +2283,23 @@
       return movie.cover ? MovieSource.poster(movie.cover) : '';
     }
 
-    function doubanHref(movie) {
-      return movie && movie.id ? movieDoubanUrl(movie.id) : '';
-    }
-
     function requestPage() {
       if (feed.online !== true) {
-        // 离线时不要抛错，交给状态区显示「启动服务」提示与重新检测按钮。
+        // 连不上片源时不要抛错，交给状态区显示引导与重新检测按钮。
         return Promise.resolve({ items: [], hasMore: false, offline: true });
       }
       const keyword = filters.query.trim();
       const decade = MOVIE_DECADES.filter(function (item) { return item.label === filters.decade; })[0] || {};
-      if (keyword) {
-        return MovieSource.search({
-          q: keyword,
-          genres: filters.genre,
-          countries: filters.region,
-          from: decade.from,
-          to: decade.to,
-          sort: filters.sort,
-          start: feed.start
-        });
-      }
-      return MovieSource.discover({
-        genres: filters.genre,
-        countries: filters.region,
+      const payload = {
+        q: keyword,
+        genre: filters.genre === '全部' ? '' : filters.genre,
+        country: filters.region === '全部' ? '' : filters.region,
         from: decade.from,
         to: decade.to,
         sort: filters.sort,
-        start: feed.start
-      });
+        page: feed.page
+      };
+      return keyword ? MovieSource.search(payload) : MovieSource.discover(payload);
     }
 
     function markButton(kind, id, label) {
@@ -2321,7 +2309,7 @@
         (on ? '✓' : '＋') + ' ' + label + '</button>';
     }
 
-    // 列表接口没有年份、类型和地区，收藏后用豆瓣条目补齐，清单里才能筛选、排序。
+    // 列表接口没有地区，收藏后用 TMDB 条目补齐，清单里才能按地区筛选、排序。
     const enriching = {};
     function needsEnrich(item) {
       if (!item) return false;
@@ -2356,7 +2344,7 @@
       }).catch(function () { enriching[id] = false; });
     }
 
-    // 清单页需要元数据才能筛选：打开清单时对缺字段的条目补一次（豆瓣限流时静默跳过）。
+    // 清单页需要元数据才能筛选：打开清单时对缺字段的条目补一次（网络失败时静默跳过）。
     function enrichLibraryList() {
       if (!libraryKind) return;
       collectionList(libraryKind).slice(0, 8).forEach(function (entry) {
@@ -2367,12 +2355,11 @@
     function cardMarkup(movie) {
       const id = movie.id;
       const posterSrc = posterOf(movie);
-      const line = movie.directors && movie.directors.length
-        ? '导演 ' + movie.directors.slice(0, 2).join(' / ')
-        : [movie.year, (movie.regions || []).join(' / ')].filter(Boolean).join(' · ');
+      const line = [movie.year, (movie.genres || []).slice(0, 2).join(' / ')]
+        .filter(Boolean).join(' · ');
       return '<article class="movie-card">' +
         '<button type="button" class="movie-poster' + (posterSrc ? '' : ' is-plain') +
-        '" data-open="' + esc(id) + '" data-title="' + esc(movie.title) + '" aria-label="查看《' + esc(movie.title) + '》的豆瓣页面">' +
+        '" data-open="' + esc(id) + '" data-title="' + esc(movie.title) + '" aria-label="查看《' + esc(movie.title) + '》的详情">' +
         (posterSrc
           ? '<img src="' + esc(posterSrc) + '" alt="" loading="lazy" decoding="async">'
           : '<span class="movie-poster-fallback">' + esc(movie.title.slice(0, 4)) + '</span>') +
@@ -2386,94 +2373,78 @@
         markButton('watched', id, '看过') + '</div></div></article>';
     }
 
-    function sizeFrame() {
-      const frame = detailBody.querySelector('.douban-frame');
-      if (!frame) return;
-      try {
-        const doc = frame.contentDocument;
-        if (!doc) return;
-        const height = Math.max(
-          doc.documentElement ? doc.documentElement.scrollHeight : 0,
-          doc.body ? doc.body.scrollHeight : 0
-        );
-        if (height > 200) frame.style.height = Math.min(6000, height) + 'px';
-      } catch (err) {
-        /* 跨域时无法测量，保持默认高度 */
-      }
+    function metaLine(parts) {
+      return parts.filter(Boolean).join(' · ');
     }
 
-    // 豆瓣页面里脚本已删，首屏 HTML 解析完就能看内容；等 load 事件（要下载完
-    // 50 多个资源，冷启动 6 秒以上）才撤骨架，用户会误以为页面卡住。
-    function whenFrameReady(frame, done) {
-      let finished = false;
-      let ticks = 0;
-      let timer = 0;
-      let guard = 0;
-      function finish() {
-        if (finished) return;
-        finished = true;
-        clearInterval(timer);
-        clearTimeout(guard);
-        done();
-      }
-      timer = setInterval(function () {
-        ticks += 1;
-        try {
-          const doc = frame.contentDocument;
-          if (doc && doc.readyState !== 'loading' && doc.body) {
-            finish();
-            return;
-          }
-        } catch (err) {
-          finish();
-          return;
-        }
-        if (ticks > 400) finish();
-      }, 60);
-      guard = setTimeout(finish, 15000);
-      frame.addEventListener('load', finish);
-    }
-
-    // 豆瓣条目页在本地服务里代理后内嵌展示，资源与链接都走同源代理。
+    // 详情改成用 TMDB 的 JSON 直接渲染：不再内嵌第三方页面，点开就是本地排版，
+    // 断网、被墙、对方改版都不会白屏。
     function openDetail(id, title) {
       if (!id) return;
-      const doubanLink = detail.querySelector('.detail-douban');
-      if (doubanLink) {
-        doubanLink.href = 'https://movie.douban.com/subject/' + encodeURIComponent(id) + '/';
-        doubanLink.setAttribute('aria-label', '在豆瓣打开《' + (title || id) + '》的条目页');
-      }
-      detailBody.innerHTML =
-        '<div class="detail-loading" aria-hidden="true">' +
-        '<span class="detail-spinner"></span><span>正在打开豆瓣条目…</span></div>' +
-        '<iframe class="douban-frame" title="豆瓣电影条目" ' +
-        'src="' + esc(MovieSource.pageUrl(id)) + '" ' +
-        'referrerpolicy="no-referrer" loading="eager"></iframe>';
-      const frame = detailBody.querySelector('.douban-frame');
-      whenFrameReady(frame, function () {
-        const loading = detailBody.querySelector('.detail-loading');
-        if (loading) loading.remove();
-        sizeFrame();
-        setTimeout(sizeFrame, 400);
-        setTimeout(sizeFrame, 1200);
-        try {
-          const doc = frame.contentDocument;
-          if (!doc) return;
-          // 豆瓣页面里的链接统一新窗口打开，避免 iframe 内被豆瓣安全页拦住。
-          doc.addEventListener('click', function (event) {
-            const link = event.target.closest('a[href]');
-            if (!link) return;
-            const url = link.href;
-            if (!/^https?:/i.test(url)) return;
-            event.preventDefault();
-            window.open(url, '_blank', 'noopener,noreferrer');
-          }, true);
-        } catch (err) {
-          /* 同源失败时保留默认行为 */
-        }
-      });
       detail.hidden = false;
+      detailBody.innerHTML = '<div class="detail-loading">' +
+        '<span class="detail-spinner"></span><span>正在读取影片资料…</span></div>';
       const back = overlay.querySelector('.detail-back');
       if (back) back.focus();
+      const link = detail.querySelector('.detail-douban');
+      if (link) {
+        link.href = MovieSource.pageUrl(id);
+        link.setAttribute('aria-label', '在 TMDB 打开《' + (title || id) + '》的条目页');
+      }
+      MovieSource.detail(id).then(function (movie) {
+        if (!movie || detail.hidden) return;
+        feed.known[movie.id] = {
+          id: movie.id, title: movie.title, year: movie.year,
+          rating: movie.rating, cover: movie.cover, genres: movie.genres
+        };
+        const runtime = movie.runtime ? Math.round(movie.runtime) + ' 分钟' : '';
+        const score = movie.rating ? movie.rating.toFixed(1) : '';
+        const votes = movie.votes ? movie.votes.toLocaleString('zh-CN') + ' 人评分' : '';
+        const tags = (movie.genres || []).join(' · ');
+        detailBody.innerHTML =
+          '<div class="movie-fiche">' +
+          (movie.backdrop
+            ? '<div class="fiche-backdrop" style="background-image:url(' +
+              esc(movie.backdrop) + ')" aria-hidden="true"></div>'
+            : '') +
+          '<div class="fiche-head">' +
+          (movie.cover
+            ? '<img class="fiche-poster" src="' + esc(movie.cover) + '" alt="" decoding="async">'
+            : '') +
+          '<div class="fiche-info">' +
+          '<h2 class="fiche-title">' + esc(movie.title) + '</h2>' +
+          (movie.originalTitle && movie.originalTitle !== movie.title
+            ? '<p class="fiche-original">' + esc(movie.originalTitle) + '</p>' : '') +
+          '<p class="fiche-meta">' + esc(metaLine([movie.year, runtime, movie.region])) + '</p>' +
+          (score
+            ? '<p class="fiche-score"><b>' + esc(score) + '</b><span>' +
+              esc(votes || '评分') + '</span></p>' : '') +
+          (tags ? '<p class="fiche-tags">' + esc(tags) + '</p>' : '') +
+          '<div class="movie-marks">' + markButton('wish', movie.id, '想看') +
+          markButton('watched', movie.id, '看过') + '</div>' +
+          '</div></div>' +
+          (movie.directors.length
+            ? '<p class="fiche-line"><span>导演</span>' + esc(movie.directors.join(' / ')) + '</p>'
+            : '') +
+          (movie.cast.length
+            ? '<p class="fiche-line"><span>主演</span>' + esc(movie.cast.join(' / ')) + '</p>'
+            : '') +
+          '<p class="fiche-overview">' +
+          esc(movie.overview || '这部片暂时没有简介。') + '</p>' +
+          '<div class="fiche-actions">' +
+          '<a class="btn btn-sm" href="' + esc(MovieSource.doubanSearchUrl(movie.title)) +
+          '" target="_blank" rel="noopener noreferrer">在豆瓣搜《' +
+          esc(movie.title) + '》</a>' +
+          '<a class="btn btn-sm" href="' + esc(movie.external || MovieSource.pageUrl(movie.id)) +
+          '" target="_blank" rel="noopener noreferrer">' +
+          (movie.provider === 'cinemeta' ? 'IMDb 条目' : 'TMDB 条目') + '</a>' +
+          '</div></div>';
+      }).catch(function (error) {
+        if (detail.hidden) return;
+        detailBody.innerHTML = '<div class="detail-loading"><span>' +
+          esc(error && error.message ? error.message : '影片资料读取失败') +
+          '</span></div>';
+      });
     }
 
     function closeDetail() {
@@ -2491,7 +2462,7 @@
       '<div class="movie-head"><div class="movie-head-title">' +
       '<p class="eyebrow">找电影</p>' +
       '<h2 id="movie-title">今天想看点什么？</h2>' +
-      '<p class="sub">' + year + ' 年 ' + month + ' 月 ' + day + ' 日 ·<span id="movie-source-note">豆瓣电影片库</span></p>' +
+      '<p class="sub">' + year + ' 年 ' + month + ' 月 ' + day + ' 日 ·<span id="movie-source-note">正在连接片库…</span></p>' +
       '</div><div class="movie-head-actions">' +
       '<button type="button" class="collection-entry" data-lib="wish" aria-pressed="false" ' +
       'aria-label="想看的电影"><span class="collection-text">想看的电影</span>' +
@@ -2499,9 +2470,24 @@
       '<button type="button" class="collection-entry" data-lib="watched" aria-pressed="false" ' +
       'aria-label="看过的电影"><span class="collection-text">看过的电影</span>' +
       '<span class="collection-short">看过</span> <b data-lib-count="watched">0</b></button>' +
+      '<button type="button" class="movie-key-open" id="movie-key-open" aria-label="片源设置">片源</button>' +
       '<button type="button" class="expense-close movie-close" aria-label="关闭找电影">×</button>' +
       '</div></div>' +
       '<div class="movie-scroll" id="movie-scroll">' +
+      '<div class="movie-keypanel" id="movie-keypanel" hidden>' +
+      '<p class="movie-keytitle">可选：用 TMDB Key 切到中文片库</p>' +
+      '<p class="movie-keytext">不填也能用——当前是免 Key 的英文全量片库。填一个免费的 TMDB ' +
+      '<b>API Key (v3 auth)</b> 后，片名、简介、类型都会变成中文，筛选也更精确。' +
+      'Key 只存在这台浏览器里，不会写进 MD 文件。</p>' +
+      '<div class="movie-keyrow">' +
+      '<input id="movie-key-input" type="text" spellcheck="false" autocomplete="off" ' +
+      'aria-label="TMDB API Key" placeholder="粘贴 TMDB API Key">' +
+      '<button type="button" class="btn btn-sm btn-primary" id="movie-key-save">保存</button>' +
+      '<a class="btn btn-sm" href="https://www.themoviedb.org/settings/api" target="_blank" ' +
+      'rel="noopener noreferrer">去申请 Key</a>' +
+      '</div>' +
+      '<p class="movie-keyhint" id="movie-key-hint" role="status" aria-live="polite"></p>' +
+      '</div>' +
       '<div class="movie-controls">' +
       '<div class="movie-toolbar">' +
       '<label class="movie-search"><svg viewBox="0 0 24 24" aria-hidden="true">' +
@@ -2533,11 +2519,11 @@
       '</div>' +
       '<div class="movie-detail" id="movie-detail" hidden>' +
       '<div class="detail-bar"><button type="button" class="detail-back" data-detail-close>← 返回片库</button>' +
-      '<a class="detail-douban" href="https://movie.douban.com/" target="_blank" rel="noopener noreferrer" ' +
-      'aria-label="在豆瓣打开这个条目"><svg viewBox="0 0 24 24" aria-hidden="true">' +
-      '<rect width="24" height="24" rx="6" fill="#2e963d"/>' +
-      '<text x="12" y="17" text-anchor="middle" font-size="12.5" fill="#fff" ' +
-      'font-family="PingFang SC,Microsoft YaHei,sans-serif">豆</text></svg></a></div>' +
+      '<a class="detail-douban" href="https://www.themoviedb.org/" target="_blank" rel="noopener noreferrer" ' +
+      'aria-label="在 TMDB 打开这个条目"><svg viewBox="0 0 24 24" aria-hidden="true">' +
+      '<rect width="24" height="24" rx="6" fill="#01b4e4"/>' +
+      '<text x="12" y="16.6" text-anchor="middle" font-size="9" fill="#fff" ' +
+      'font-family="PingFang SC,Microsoft YaHei,sans-serif">TMDB</text></svg></a></div>' +
       '<div class="detail-body" id="movie-detail-body"></div>' +
       '</div>' +
       '</div>';
@@ -2557,6 +2543,10 @@
     const closeButton = overlay.querySelector('.movie-close');
     const detail = overlay.querySelector('#movie-detail');
     const detailBody = overlay.querySelector('#movie-detail-body');
+    const keyPanel = overlay.querySelector('#movie-keypanel');
+    const keyInput = overlay.querySelector('#movie-key-input');
+    const keyHint = overlay.querySelector('#movie-key-hint');
+    const keyOpen = overlay.querySelector('#movie-key-open');
     let libraryKind = null;
     renderLibraryButtons();
 
@@ -2573,11 +2563,68 @@
       });
     }
 
+    // 顶部小字显示当前用的是哪个源，用户能一眼看出片名为什么是英文。
+    function updateSourceNote() {
+      const state = MovieSource.state();
+      if (!sourceNote) return;
+      sourceNote.textContent = state.provider === 'tmdb'
+        ? 'TMDB 中文库'
+        : '英文片库 · 可填 Key 换中文';
+    }
+
+    // 片源只需要一个 API Key（可选）：填一次就存在浏览器里，
+    // 之后不管换筛选、翻多少页、点多少次「换一批」都不会再被限流。
+    function showKeyPanel(show) {
+      keyPanel.hidden = !show;
+      if (!show) return;
+      keyHint.textContent = '';
+      keyInput.placeholder = MovieSource.hasKey()
+        ? '已保存，粘贴新 Key 可替换'
+        : '粘贴 TMDB API Key（API Key (v3 auth)）';
+      keyInput.focus();
+      keyInput.select();
+    }
+
+    function saveKey() {
+      const value = keyInput.value.trim();
+      if (!value) {
+        keyHint.textContent = '先把 Key 粘进来。';
+        keyInput.focus();
+        return;
+      }
+      MovieSource.setKey(value);
+      keyHint.textContent = '正在验证…';
+      feed.online = null;
+      renderStatus();
+      MovieSource.online().then(function (ok) {
+        if (!overlay.isConnected) return;
+        if (ok) {
+          keyHint.textContent = 'Key 有效，片库已就绪。';
+          feed.online = true;
+          keyPanel.hidden = true;
+          resetFeed(1);
+          return;
+        }
+        keyHint.textContent = '没通过验证：' + (MovieSource.state().error || '网络异常') +
+          '。确认复制的是「API Key (v3 auth)」那一串。';
+        feed.online = false;
+        renderStatus();
+      });
+    }
+
+    keyOpen.addEventListener('click', function () { showKeyPanel(keyPanel.hidden); });
+    overlay.querySelector('#movie-key-save').addEventListener('click', saveKey);
+    keyInput.addEventListener('keydown', function (event) {
+      if (event.key !== 'Enter') return;
+      event.preventDefault();
+      saveKey();
+    });
+
     function libraryCard(item) {
       const posterSrc = posterOf(item);
       return '<article class="movie-card">' +
         '<button type="button" class="movie-poster' + (posterSrc ? '' : ' is-plain') +
-        '" data-open="' + esc(item.id) + '" data-title="' + esc(item.title) + '" aria-label="查看《' + esc(item.title) + '》的豆瓣页面">' +
+        '" data-open="' + esc(item.id) + '" data-title="' + esc(item.title) + '" aria-label="查看《' + esc(item.title) + '》的详情">' +
         (posterSrc
           ? '<img src="' + esc(posterSrc) + '" alt="" loading="lazy" decoding="async">'
           : '<span class="movie-poster-fallback">' + esc(item.title.slice(0, 4)) + '</span>') +
@@ -2721,38 +2768,20 @@
       });
     }
 
-    // 页面托管在 GitHub Pages 这类远端 https 站点时，浏览器禁止网页访问本机
-    // 127.0.0.1（Chrome 的本地网络访问保护），跨源探测必然失败，与服务有没有启动无关。
-    // 此时给一条直达本机日历的链接：那边是同源，找电影一定能用。
-    function remoteHosted() {
-      return location.protocol === 'https:' &&
-        !/^(127\.0\.0\.1|localhost|\[::1\])$/.test(location.hostname);
+    // 两个片源都连不上时才出现：给一次重试与填 Key 的机会。
+    // 平时无 Key 也能用（Cinemeta 英文片库），所以这里不再提示"必须填 Key"。
+    function sourceNotice() {
+      const state = MovieSource.state();
+      return '<span class="movie-offline">片源没连上：' +
+        esc(state.error || '网络异常') + '。' +
+        (state.hasKey ? '' : '也可以填一个 TMDB Key 切到中文片库。') +
+        '</span>' +
+        '<button type="button" class="movie-retry" data-key>填写 Key</button>' +
+        '<button type="button" class="movie-retry" data-start>重新检测</button>';
     }
 
-    function localMovieUrl() {
-      return 'http://127.0.0.1:8765/?movie=1#/' + year + '/' + month + '/' + day;
-    }
-
-    function offlineNotice() {
-      const start = '找电影由本地 <code>serve.py</code> 提供：双击项目里的 ' +
-        '<code>启动人生日历.vbs</code>（不会弹命令行窗口；macOS / Linux 运行 ' +
-        '<code>python serve.py</code>），它会启动服务并自动打开日历。';
-      if (remoteHosted()) {
-        return '<span class="movie-offline">' +
-          '当前页面在远端地址（如 GitHub Pages），浏览器不允许它访问本机服务，' +
-          '所以这里连不上豆瓣片库。' + start +
-          '启动后点「在本机打开找电影」，会在本机日历里直接打开找电影这一页。' +
-          '</span>' +
-          '<a class="movie-retry movie-local" data-local href="' + esc(localMovieUrl()) + '">' +
-          '在本机打开找电影</a>' +
-          '<button type="button" class="movie-retry" data-start>已启动，重新检测</button>';
-      }
-      return '<span class="movie-offline">' + start + '</span>' +
-        '<button type="button" class="movie-retry" data-start>已启动，重新检测</button>';
-    }
-
-    // 成功时不再显示「已加载 20 部 · 豆瓣电影片库 …」这类小字：
-    // 网格本身就是结果，只有在连不上、被限流、无结果或放宽条件时才给提示。
+    // 成功时不显示多余小字：网格本身就是结果，只有没 Key、连不上、
+    // 没结果或自动切片时才给提示。
     function renderStatus() {
       if (libraryKind) {
         countEl.hidden = true;
@@ -2765,11 +2794,11 @@
         countEl.innerHTML = '<span class="movie-error">' + esc(feed.error || feed.unavailable) +
           '</span><button type="button" class="movie-retry" data-retry>重试</button>';
       } else if (feed.loading && !feed.items.length) {
-        countEl.textContent = '正在加载豆瓣片库…';
+        countEl.textContent = '正在加载片库…';
       } else if (feed.online === null) {
-        countEl.textContent = '正在连接豆瓣片库…';
+        countEl.textContent = '正在连接 TMDB…';
       } else if (feed.online !== true) {
-        countEl.innerHTML = offlineNotice();
+        countEl.innerHTML = sourceNotice();
       } else if (!feed.items.length) {
         countEl.textContent = feed.note || '没有符合条件的电影，换个筛选条件或关键词试试。';
       } else if (feed.note) {
@@ -2796,8 +2825,16 @@
       });
     }
 
-    // 推荐流里跳过「看过」的电影；整页都被过滤掉时继续取下一页。
-    function fetchChunk(token, remaining) {
+    // 推荐流里跳过「看过」的电影，也跳过已经显示过的条目（同一条目可能在不同页重复出现）；
+    // 整页都被过滤掉时继续取下一页。
+    function fetchChunk(token, remaining, seen) {
+      const used = seen || {};
+      if (!seen) {
+        feed.items.forEach(function (item) { used[item.id] = true; });
+        grid.querySelectorAll('[data-open]').forEach(function (node) {
+          used[node.getAttribute('data-open')] = true;
+        });
+      }
       return requestPage().then(function (page) {
         if (token !== feed.token) return { items: [], hasMore: false };
         if (page && page.unavailable) {
@@ -2809,13 +2846,16 @@
         });
         const skip = filters.query.trim() ? [] : savedIds();
         const visible = items.filter(function (item) {
-          return item && item.id && skip.indexOf(item.id) < 0;
+          if (!item || !item.id || skip.indexOf(item.id) >= 0 || used[item.id]) return false;
+          used[item.id] = true;
+          return true;
         });
-        feed.start += items.length;
+        feed.page = (page.page || feed.page) + 1;
+        feed.totalPages = page.totalPages || 0;
         feed.hasMore = !!page.hasMore && items.length > 0;
         feed.note = page.note || '';
         if (!visible.length && feed.hasMore && remaining > 0) {
-          return fetchChunk(token, remaining - 1);
+          return fetchChunk(token, remaining - 1, used);
         }
         return { items: visible, hasMore: feed.hasMore };
       });
@@ -2853,22 +2893,21 @@
       });
     }
 
-    // 豆瓣这个接口能稳定翻到第 28 页（start 540），再深就会 403。
-    const MOVIE_DEPTH_PAGES = 28;
-
-    // 「换一批」用随机起始页，绕开已经看过的几页，得到一批全新的推荐。
-    const usedStarts = {};
-    function pickFreshStart() {
+    // TMDB discover 每页 20 条、最多到第 500 页，换一批就在这个范围里随机跳页，
+    // 完全不需要付出任何"限流"代价。
+    const usedPages = {};
+    function pickFreshPage() {
+      const limit = Math.min(MovieSource.MAX_PAGE, feed.totalPages || MovieSource.MAX_PAGE);
       const candidates = [];
-      for (let page = 0; page < MOVIE_DEPTH_PAGES; page += 1) {
-        if (!usedStarts[page * MOVIE_PAGE]) candidates.push(page * MOVIE_PAGE);
+      for (let page = 1; page <= limit; page += 1) {
+        if (!usedPages[page]) candidates.push(page);
       }
       if (!candidates.length) {
-        Object.keys(usedStarts).forEach(function (key) { delete usedStarts[key]; });
-        for (let page = 0; page < MOVIE_DEPTH_PAGES; page += 1) candidates.push(page * MOVIE_PAGE);
+        Object.keys(usedPages).forEach(function (key) { delete usedPages[key]; });
+        for (let page = 1; page <= limit; page += 1) candidates.push(page);
       }
       const picked = candidates[Math.floor(Math.random() * candidates.length)];
-      usedStarts[picked] = true;
+      usedPages[picked] = true;
       return picked;
     }
 
@@ -2902,10 +2941,10 @@
       syncChips('decade');
     }
 
-    function resetFeed(startAt) {
+    function resetFeed(page) {
       feed.token += 1;
       feed.items = [];
-      feed.start = startAt || 0;
+      feed.page = Math.max(1, Number(page) || 1);
       feed.hasMore = true;
       feed.loading = false;
       feed.error = '';
@@ -2994,6 +3033,12 @@
         return;
       }
 
+      const keyButton = event.target.closest('[data-key]');
+      if (keyButton) {
+        showKeyPanel(true);
+        return;
+      }
+
       const start = event.target.closest('[data-start]');
       if (start) {
         start.disabled = true;
@@ -3002,7 +3047,7 @@
           if (!overlay.isConnected) return;
           feed.online = available;
           if (available) {
-            resetFeed();
+            resetFeed(1);
           } else {
             start.disabled = false;
             start.textContent = '仍然连不上，再试一次';
@@ -3086,7 +3131,7 @@
       const untouched = filters.genre === '全部' && filters.region === '全部' &&
         filters.decade === '全部';
       if (!filters.query.trim() && (untouched || autoSlice)) pickSlice();
-      resetFeed(pickFreshStart());
+      resetFeed(pickFreshPage());
     });
 
     document.addEventListener('keydown', onKey);
@@ -3102,10 +3147,18 @@
     }
 
     applySortOptions();
+    // 没有 Key 也能直接用（Cinemeta 英文片库），所以这里总是先探测再加载；
+    // 只有两个源都失败时才把 Key 面板露出来。
     MovieSource.online().then(function (available) {
       if (!overlay.isConnected) return;
       feed.online = available;
-      resetFeed();
+      updateSourceNote();
+      if (available) {
+        resetFeed(1);
+      } else {
+        renderStatus();
+        showKeyPanel(true);
+      }
     });
     searchInput.focus();
   }
