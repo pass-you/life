@@ -808,6 +808,9 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path.startswith("/api/movie/"):
                 self.handle_api(path[len("/api/movie/"):], query, head_only)
+            elif path == "/api/stop":
+                # 「停止人生日历.vbs」请求的就是这个短路径（无 Origin 头的本机脚本）。
+                self.handle_stop(head_only)
             else:
                 self.handle_static(path, head_only)
         except BrokenPipeError:
