@@ -2287,14 +2287,14 @@
         : [movie.year, (movie.regions || []).join(' / ')].filter(Boolean).join(' · ');
       return '<article class="movie-card">' +
         '<button type="button" class="movie-poster' + (posterSrc ? '' : ' is-plain') +
-        '" data-open="' + esc(id) + '" aria-label="查看《' + esc(movie.title) + '》的豆瓣页面">' +
+        '" data-open="' + esc(id) + '" data-title="' + esc(movie.title) + '" aria-label="查看《' + esc(movie.title) + '》的豆瓣页面">' +
         (posterSrc
           ? '<img src="' + esc(posterSrc) + '" alt="" loading="lazy" decoding="async">'
           : '<span class="movie-poster-fallback">' + esc(movie.title.slice(0, 4)) + '</span>') +
         (movie.rating ? '<span class="movie-score">' + movie.rating.toFixed(1) + '</span>' : '') +
         '</button>' +
         '<div class="movie-body"><h3 class="movie-name">' +
-        '<button type="button" class="movie-name-btn" data-open="' + esc(id) + '">' +
+        '<button type="button" class="movie-name-btn" data-open="' + esc(id) + '" data-title="' + esc(movie.title) + '">' +
         esc(movie.title) + '</button></h3>' +
         (line ? '<p class="movie-meta">' + esc(line) + '</p>' : '') +
         '<div class="movie-marks">' + markButton('wish', id, '想看') +
@@ -2317,9 +2317,46 @@
       }
     }
 
+    // 豆瓣页面里脚本已删，首屏 HTML 解析完就能看内容；等 load 事件（要下载完
+    // 50 多个资源，冷启动 6 秒以上）才撤骨架，用户会误以为页面卡住。
+    function whenFrameReady(frame, done) {
+      let finished = false;
+      let ticks = 0;
+      let timer = 0;
+      let guard = 0;
+      function finish() {
+        if (finished) return;
+        finished = true;
+        clearInterval(timer);
+        clearTimeout(guard);
+        done();
+      }
+      timer = setInterval(function () {
+        ticks += 1;
+        try {
+          const doc = frame.contentDocument;
+          if (doc && doc.readyState !== 'loading' && doc.body) {
+            finish();
+            return;
+          }
+        } catch (err) {
+          finish();
+          return;
+        }
+        if (ticks > 400) finish();
+      }, 60);
+      guard = setTimeout(finish, 15000);
+      frame.addEventListener('load', finish);
+    }
+
     // 豆瓣条目页在本地服务里代理后内嵌展示，资源与链接都走同源代理。
-    function openDetail(id) {
+    function openDetail(id, title) {
       if (!id) return;
+      const doubanLink = detail.querySelector('.detail-douban');
+      if (doubanLink) {
+        doubanLink.href = 'https://movie.douban.com/subject/' + encodeURIComponent(id) + '/';
+        doubanLink.setAttribute('aria-label', '在豆瓣打开《' + (title || id) + '》的条目页');
+      }
       detailBody.innerHTML =
         '<div class="detail-loading" aria-hidden="true">' +
         '<span class="detail-spinner"></span><span>正在打开豆瓣条目…</span></div>' +
@@ -2327,7 +2364,7 @@
         'src="' + esc(MovieSource.pageUrl(id)) + '" ' +
         'referrerpolicy="no-referrer" loading="eager"></iframe>';
       const frame = detailBody.querySelector('.douban-frame');
-      frame.addEventListener('load', function () {
+      whenFrameReady(frame, function () {
         const loading = detailBody.querySelector('.detail-loading');
         if (loading) loading.remove();
         sizeFrame();
@@ -2406,7 +2443,12 @@
       '<div class="movie-library" id="movie-library" hidden></div>' +
       '</div>' +
       '<div class="movie-detail" id="movie-detail" hidden>' +
-      '<div class="detail-bar"><button type="button" class="detail-back" data-detail-close>← 返回片库</button></div>' +
+      '<div class="detail-bar"><button type="button" class="detail-back" data-detail-close>← 返回片库</button>' +
+      '<a class="detail-douban" href="https://movie.douban.com/" target="_blank" rel="noopener noreferrer" ' +
+      'aria-label="在豆瓣打开这个条目"><svg viewBox="0 0 24 24" aria-hidden="true">' +
+      '<rect width="24" height="24" rx="6" fill="#2e963d"/>' +
+      '<text x="12" y="17" text-anchor="middle" font-size="12.5" fill="#fff" ' +
+      'font-family="PingFang SC,Microsoft YaHei,sans-serif">豆</text></svg></a></div>' +
       '<div class="detail-body" id="movie-detail-body"></div>' +
       '</div>' +
       '</div>';
@@ -2445,14 +2487,14 @@
       const posterSrc = posterOf(item);
       return '<article class="movie-card">' +
         '<button type="button" class="movie-poster' + (posterSrc ? '' : ' is-plain') +
-        '" data-open="' + esc(item.id) + '" aria-label="查看《' + esc(item.title) + '》的豆瓣页面">' +
+        '" data-open="' + esc(item.id) + '" data-title="' + esc(item.title) + '" aria-label="查看《' + esc(item.title) + '》的豆瓣页面">' +
         (posterSrc
           ? '<img src="' + esc(posterSrc) + '" alt="" loading="lazy" decoding="async">'
           : '<span class="movie-poster-fallback">' + esc(item.title.slice(0, 4)) + '</span>') +
         (item.rating ? '<span class="movie-score">' + item.rating.toFixed(1) + '</span>' : '') +
         '</button>' +
         '<div class="movie-body"><h3 class="movie-name">' +
-        '<button type="button" class="movie-name-btn" data-open="' + esc(item.id) + '">' +
+        '<button type="button" class="movie-name-btn" data-open="' + esc(item.id) + '" data-title="' + esc(item.title) + '">' +
         esc(item.title) + '</button></h3>' +
         '<p class="movie-meta">' + esc([item.year, item.added ? item.added + ' 收藏' : '']
           .filter(Boolean).join(' · ')) + '</p>' +
@@ -2771,7 +2813,7 @@
 
       const open = event.target.closest('[data-open]');
       if (open) {
-        openDetail(open.dataset.open);
+        openDetail(open.dataset.open, open.dataset.title);
         return;
       }
 

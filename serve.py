@@ -499,6 +499,12 @@ PAGE_TTL = 6 * 60 * 60
 PAGE_MAX_BYTES = 4 * 1024 * 1024
 ASSET_MAX_BYTES = 8 * 1024 * 1024
 
+IMAGE_SUFFIX_RE = re.compile(r"\.(?:jpe?g|png|gif|webp|svg)$", re.I)
+# 1×1 透明 PNG：豆瓣图片抓不到时用它占位。
+TRANSPARENT_PNG = bytes.fromhex(
+    "89504e470d0a1a0a0000000d494844520000000100000001080600000"
+    "01f15c4890000000d4944415478da63fccfc0f01f00050001ffabce3689"
+    "0000000049454e44ae426082")
 DOUBANIO_HOST_RE = re.compile(r"^(?:[a-z0-9-]+\.)*doubanio\.com$", re.I)
 DOUBANIO_URL_RE = re.compile(
     r"(?:https?:)?//((?:[a-z0-9-]+\.)*doubanio\.com)(/[^\s\"'<>()\\]*)", re.I)
@@ -509,11 +515,33 @@ REFRESH_RE = re.compile(r"<meta[^>]+http-equiv=[\"']?refresh[\"']?[^>]*>", re.I)
 HEAD_RE = re.compile(r"<head[^>]*>", re.I)
 
 
+# 豆瓣原图（view/thing_review/raw、view/photo/l…）单张能到 10 MB 以上，
+# 条目页里只是小图展示，统一换成 m 尺寸（约 100 KB），否则一个页面要拉几十秒。
+IMAGE_SIZE_MAP = (
+    ("/view/thing_review/raw/", "/view/thing_review/m/"),
+    ("/view/photo/raw/", "/view/photo/m/"),
+    ("/view/photo/l/", "/view/photo/m/"),
+    ("/view/subject/raw/", "/view/subject/m/"),
+    ("/view/subject/l/", "/view/subject/m/"),
+)
+
+
+def smaller_image(url: str) -> str:
+    parsed = urllib.parse.urlparse(url)
+    if not DOUBANIO_HOST_RE.match(parsed.hostname or ""):
+        return url
+    for big, small in IMAGE_SIZE_MAP:
+        if big in url:
+            return url.replace(big, small, 1)
+    return url
+
+
 def asset_url(url: str, origin: str = "") -> str:
     # 页面里注入了 <base href="https://m.douban.com/…">，相对路径会被解析到豆瓣，
     # 所以内嵌页里的资源必须写成带本站 origin 的绝对地址。
     # 原文里的 &amp; 必须还原成 &，否则带签名的图片地址会 403。
     url = html.unescape(url)
+    url = smaller_image(url)
     return origin + "/api/movie/asset?u=" + urllib.parse.quote(url, safe="")
 
 
@@ -524,8 +552,95 @@ def asset_allowed(url: str) -> bool:
     return bool(DOUBANIO_HOST_RE.match(parsed.hostname or ""))
 
 
+LINK_TAG_RE = re.compile(r"<link\b[^>]*>", re.I)
+IMG_TAG_RE = re.compile(r"<img\b[^>]*>", re.I)
+# 页面按「任意 origin」构建一次，请求时再把占位符换成真实地址，端口变化也不会失效。
+ORIGIN_TOKEN = "http://__life_origin__"
+CSS_MEMORY: dict[str, str] = {}
+CSS_MEMORY_LOCK = threading.Lock()
+BUILT_PAGES: dict[str, tuple[int, str]] = {}
+BUILT_LOCK = threading.Lock()
+
+
+def stylesheet_text(url: str) -> str | None:
+    """取一份豆瓣 CSS（内存 → 磁盘 → 上游）。取不到时返回 None，退回 <link> 加载。"""
+    with CSS_MEMORY_LOCK:
+        cached = CSS_MEMORY.get(url)
+    if cached is not None:
+        return cached
+    body = ""
+    path = cache_path("assets", url)
+    try:
+        if path.is_file():
+            body = path.read_text("utf-8", "replace")
+    except OSError:
+        body = ""
+    if not body:
+        try:
+            fetched, _ = http_get(url, MOBILE_REFERER, accept="text/css,*/*;q=0.1",
+                                  ua=MOBILE_UA, lane="media", timeout=10)
+            body = fetched.decode("utf-8", "replace")
+        except Exception:  # noqa: BLE001 单份 CSS 失败不影响整页
+            return None
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(body, "utf-8")
+            os.replace(tmp, path)
+        except OSError:
+            pass
+    if not body.strip():
+        return None
+    with CSS_MEMORY_LOCK:
+        CSS_MEMORY[url] = body
+    return body
+
+
+def inline_stylesheets(markup: str, origin: str) -> str:
+    """把外链 CSS 内联进页面：省掉 3 个阻塞渲染的往返，首屏直接带样式。"""
+
+    def repl(match: re.Match) -> str:
+        tag = match.group(0)
+        if "stylesheet" not in tag.lower():
+            return tag
+        href = re.search(r'href="([^"]+)"', tag)
+        if not href:
+            return tag
+        url = html.unescape(href.group(1))
+        if url.startswith("//"):
+            url = "https:" + url
+        if not asset_allowed(url):
+            return tag
+        css = stylesheet_text(url)
+        if css is None:
+            return tag
+        return "<style>%s</style>" % rewrite_css(css, url, origin)
+
+    return LINK_TAG_RE.sub(repl, markup)
+
+
+def lazy_images(markup: str) -> str:
+    """图片默认懒加载：条目页底部的剧照、推荐海报不该阻塞首屏。
+
+    页面脚本已删除，豆瓣自己的 data-src 懒加载不会再执行，这些图会一直是裂图；
+    没有 src 的图片直接把 data-src 提升成 src（仍有 loading="lazy" 控制加载时机）。
+    """
+
+    def repl(match: re.Match) -> str:
+        tag = match.group(0)
+        if not re.search(r'\ssrc="', tag, re.I):
+            tag = re.sub(r'\sdata-(?:src|original)="', ' src="', tag, count=1, flags=re.I)
+        if "loading=" in tag.lower():
+            return tag
+        if tag.endswith("/>"):
+            return tag[:-2].rstrip() + ' loading="lazy" decoding="async" />'
+        return tag[:-1].rstrip() + ' loading="lazy" decoding="async">'
+
+    return IMG_TAG_RE.sub(repl, markup)
+
+
 def rewrite_douban_page(html: str, base: str, origin: str = "") -> str:
-    """把豆瓣条目页变成可以内嵌的静态页：去脚本、资源走本地代理。"""
+    """把豆瓣条目页变成可以内嵌的静态页：去脚本、样式内联、资源走本地代理。"""
     html = SCRIPT_RE.sub("", html)
     html = EMPTY_SCRIPT_RE.sub("", html)
     html = REFRESH_RE.sub("", html)
@@ -536,6 +651,7 @@ def rewrite_douban_page(html: str, base: str, origin: str = "") -> str:
             url = "https:" + url
         return asset_url(url, origin)
 
+    html = inline_stylesheets(html, origin)
     html = DOUBANIO_URL_RE.sub(repl, html)
     # 页面里的脚本已删除，内联事件处理器（例如 ga(...)）只会报错。
     html = re.sub(r"\son[a-z]+=\"[^\"]*\"", "", html, flags=re.I)
@@ -547,10 +663,10 @@ def rewrite_douban_page(html: str, base: str, origin: str = "") -> str:
     if "<base" not in html.lower():
         html = HEAD_RE.sub(
             lambda m: m.group(0) + '<base href="%s">' % base, html, count=1)
-    return html
+    return lazy_images(html)
 
 
-def rewrite_css(css: str, base: str) -> str:
+def rewrite_css(css: str, base: str, origin: str = "") -> str:
     def repl(match: re.Match) -> str:
         raw = match.group(2).strip()
         if raw.startswith(("data:", "blob:", "#")):
@@ -558,7 +674,7 @@ def rewrite_css(css: str, base: str) -> str:
         absolute = urllib.parse.urljoin(base, raw)
         if not asset_allowed(absolute):
             return match.group(0)
-        return 'url("%s")' % asset_url(absolute)
+        return 'url("%s")' % asset_url(absolute, origin)
 
     return CSS_URL_RE.sub(repl, css)
 
@@ -588,8 +704,17 @@ def douban_page(subject_id: str, origin: str = "") -> str:
             os.replace(tmp, path)
         except OSError:
             pass
-    # 原始页面进缓存，重写（含本站 origin）每次请求都做，端口变化也不会留下坏链接。
-    return rewrite_douban_page(html, base, origin)
+    # 构建结果按「原始页面的哈希」缓存，同一部电影反复打开时零重写成本；
+    # origin 在最后一步替换，所以端口（8765/8080…）变化也不用重建。
+    stamp = hash(html)
+    with BUILT_LOCK:
+        built = BUILT_PAGES.get(subject_id)
+    if built and built[0] == stamp:
+        return built[1].replace(ORIGIN_TOKEN, origin)
+    page = rewrite_douban_page(html, base, ORIGIN_TOKEN)
+    with BUILT_LOCK:
+        BUILT_PAGES[subject_id] = (stamp, page)
+    return page.replace(ORIGIN_TOKEN, origin)
 
 
 def page_error_html(subject_id: str, message: str) -> str:
@@ -792,8 +917,14 @@ class Handler(BaseHTTPRequestHandler):
                     lane="media", timeout=10)
                 if len(fetched) > ASSET_MAX_BYTES:
                     raise ValueError("资源过大")
+                # 图片 CDN 有时对失效地址返回 200 + 一页 HTML / 几百字节的错误页，
+                # 直接透传会变成裂图，还会让浏览器反复重试拖慢整页。
+                sniffed = header_type.split(";")[0].strip().lower()
+                if sniffed.startswith(("text/html", "application/json")) or \
+                        fetched[:15].lstrip().lower().startswith((b"<!doctype", b"<html")):
+                    raise ValueError("豆瓣返回的不是图片")
                 body = fetched
-                content_type = header_type.split(";")[0].strip() or content_type
+                content_type = sniffed or content_type
                 try:
                     path.parent.mkdir(parents=True, exist_ok=True)
                     tmp = path.with_suffix(".tmp")
@@ -802,6 +933,11 @@ class Handler(BaseHTTPRequestHandler):
                 except OSError:
                     pass
         except Exception as exc:  # noqa: BLE001 单个资源失败不影响整页
+            if IMAGE_SUFFIX_RE.search(urllib.parse.urlparse(url).path):
+                # 图片占位：字节极少，浏览器不再等超时，也不会显示裂图。
+                self.send_bytes(200, TRANSPARENT_PNG, "image/png",
+                                "public, max-age=600", head_only)
+                return
             self.send_json(502, {"error": "资源加载失败：%s" % exc}, head_only)
             return
         is_css = "css" in content_type or url.lower().split("?")[0].endswith(".css")
