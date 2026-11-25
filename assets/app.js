@@ -34,7 +34,9 @@
     { label: '更早', from: 1900, to: 1949 }
   ];
   const MOVIE_SORTS = [
+    { value: 'U', label: '综合排序' },
     { value: 'S', label: '评分最高' },
+    { value: 'R', label: '评价人数' },
     { value: 'T', label: '最新上映' }
   ];
 
@@ -2181,9 +2183,9 @@
   function openMovieModal(year, month, day) {
     if (document.querySelector('.expense-modal')) return;
     const node = dayNode(year, month, day, true);
-    const filters = { genre: '全部', region: '全部', decade: '全部', sort: 'S', query: '' };
+    const filters = { genre: '全部', region: '全部', decade: '全部', sort: 'U', query: '' };
     const feed = {
-      ready: false,
+      online: null,
       items: [],
       known: {},
       start: 0,
@@ -2191,8 +2193,7 @@
       loading: false,
       token: 0,
       error: '',
-      total: 0,
-      relaxed: ''
+      note: ''
     };
 
     function watchedIds() {
@@ -2216,7 +2217,7 @@
         title: movie.title || '',
         year: movie.year || '',
         rating: movie.rating || 0,
-        poster: movie.poster || '',
+        cover: movie.cover || '',
         added: dayStamp()
       });
       return true;
@@ -2232,8 +2233,8 @@
 
     function posterOf(movie) {
       if (!movie) return '';
-      return MovieSource.poster(movie) ||
-        (movie.poster ? 'assets/library/p/' + movie.poster : '');
+      if (movie.poster) return movie.poster;
+      return movie.cover ? MovieSource.poster(movie.cover) : '';
     }
 
     function doubanHref(movie) {
@@ -2241,12 +2242,29 @@
     }
 
     function requestPage() {
+      if (feed.online !== true) {
+        // 离线时不要抛错，交给状态区显示「启动服务」提示与重新检测按钮。
+        return Promise.resolve({ items: [], hasMore: false, offline: true });
+      }
+      const keyword = filters.query.trim();
+      const decade = MOVIE_DECADES.filter(function (item) { return item.label === filters.decade; })[0] || {};
+      if (keyword) {
+        return MovieSource.search({
+          q: keyword,
+          genres: filters.genre,
+          countries: filters.region,
+          from: decade.from,
+          to: decade.to,
+          sort: filters.sort,
+          start: feed.start
+        });
+      }
       return MovieSource.discover({
-        genre: filters.genre,
-        region: filters.region,
-        decade: filters.decade,
+        genres: filters.genre,
+        countries: filters.region,
+        from: decade.from,
+        to: decade.to,
         sort: filters.sort,
-        query: filters.query.trim(),
         start: feed.start
       });
     }
@@ -2258,19 +2276,31 @@
         (on ? '✓' : '＋') + ' ' + label + '</button>';
     }
 
+    // 列表接口没有年份，收藏后再补一次豆瓣条目信息，让清单能显示年份与评分。
+    function enrichLibraryItem(id) {
+      if (feed.online !== true || !id) return;
+      const item = findInCollection('wish', id) || findInCollection('watched', id);
+      if (!item || (item.year && item.rating)) return;
+      MovieSource.detail(id).then(function (data) {
+        if (!data) return;
+        const target = findInCollection('wish', id) || findInCollection('watched', id);
+        if (!target) return;
+        let changed = false;
+        if (!target.year && data.year) { target.year = data.year; changed = true; }
+        if (!target.rating && data.rating) { target.rating = data.rating; changed = true; }
+        if (!target.title && data.title) { target.title = data.title; changed = true; }
+        if (!changed) return;
+        markDirty();
+        if (libraryKind === 'wish' || libraryKind === 'watched') renderLibraryView();
+      }).catch(function () {});
+    }
+
     function cardMarkup(movie) {
       const id = movie.id;
       const posterSrc = posterOf(movie);
-      // 部分片子只有列表标签（没有条目详情），用年份 / 地区 / 类型兜底，不留空行。
-      const bits = [];
-      if (movie.directors && movie.directors.length) {
-        bits.push('导演 ' + movie.directors.slice(0, 2).join(' / '));
-      } else {
-        if (movie.year) bits.push(movie.year);
-        if (movie.region) bits.push(movie.region);
-        if (movie.genres && movie.genres.length) bits.push(movie.genres.slice(0, 2).join(' '));
-      }
-      const line = bits.join(' · ');
+      const line = movie.directors && movie.directors.length
+        ? '导演 ' + movie.directors.slice(0, 2).join(' / ')
+        : [movie.year, (movie.regions || []).join(' / ')].filter(Boolean).join(' · ');
       return '<article class="movie-card">' +
         '<button type="button" class="movie-poster' + (posterSrc ? '' : ' is-plain') +
         '" data-open="' + esc(id) + '" data-title="' + esc(movie.title) + '" aria-label="查看《' + esc(movie.title) + '》的豆瓣页面">' +
@@ -2287,62 +2317,92 @@
         markButton('watched', id, '看过') + '</div></div></article>';
     }
 
-    // 条目详情用片库自带的数据在本页渲染：静态托管打开即可用，不必启动本地服务。
-    // 右上角豆瓣图标直达官网条目页，看更多剧照 / 影评。
-    function detailMarkup(movie) {
-      const posterSrc = posterOf(movie);
-      const meta = [movie.year, movie.region, movie.duration,
-        (movie.genres || []).join(' / ')].filter(Boolean);
-      const directors = (movie.directors || []).join(' / ');
-      const casts = (movie.casts || []).slice(0, 10).join(' / ');
-      return '<article class="entry">' +
-        '<div class="entry-head">' +
-        (posterSrc
-          ? '<img class="entry-poster" src="' + esc(posterSrc) + '" alt="" decoding="async">'
-          : '<span class="entry-poster is-plain"><span>' + esc(movie.title.slice(0, 4)) + '</span></span>') +
-        '<div class="entry-text">' +
-        '<h2 class="entry-title">' + esc(movie.title) + '</h2>' +
-        (movie.rating
-          ? '<p class="entry-rate"><b>' + movie.rating.toFixed(1) + '</b><span>豆瓣评分</span></p>'
-          : '') +
-        (meta.length
-          ? '<p class="entry-meta">' + esc(meta.join(' · ')) + '</p>'
-          : '<p class="entry-meta">片库内暂无更多资料，可点右上角在豆瓣查看完整条目。</p>') +
-        '<div class="movie-marks">' + markButton('wish', movie.id, '想看') +
-        markButton('watched', movie.id, '看过') + '</div>' +
-        '</div></div>' +
-        (directors ? '<p class="entry-row"><span>导演</span>' + esc(directors) + '</p>' : '') +
-        (casts ? '<p class="entry-row"><span>主演</span>' + esc(casts) + '</p>' : '') +
-        (movie.summary
-          ? '<blockquote class="entry-quote">' + esc(movie.summary) +
-            (movie.summaryBy ? '<cite>—— ' + esc(movie.summaryBy) + '</cite>' : '') + '</blockquote>'
-          : '') +
-        '</article>';
+    function sizeFrame() {
+      const frame = detailBody.querySelector('.douban-frame');
+      if (!frame) return;
+      try {
+        const doc = frame.contentDocument;
+        if (!doc) return;
+        const height = Math.max(
+          doc.documentElement ? doc.documentElement.scrollHeight : 0,
+          doc.body ? doc.body.scrollHeight : 0
+        );
+        if (height > 200) frame.style.height = Math.min(6000, height) + 'px';
+      } catch (err) {
+        /* 跨域时无法测量，保持默认高度 */
+      }
     }
 
-    function openDetail(id, title) {
-      if (!id) return;
-      detail.hidden = false;
-      const doubanLink = detail.querySelector('.detail-douban');
-      if (doubanLink) {
-        doubanLink.href = movieDoubanUrl(id) || 'https://movie.douban.com/';
-        doubanLink.setAttribute('aria-label', '在豆瓣打开《' + (title || id) + '》的条目页');
+    // 豆瓣页面里脚本已删，首屏 HTML 解析完就能看内容；等 load 事件（要下载完
+    // 50 多个资源，冷启动 6 秒以上）才撤骨架，用户会误以为页面卡住。
+    function whenFrameReady(frame, done) {
+      let finished = false;
+      let ticks = 0;
+      let timer = 0;
+      let guard = 0;
+      function finish() {
+        if (finished) return;
+        finished = true;
+        clearInterval(timer);
+        clearTimeout(guard);
+        done();
       }
-      const known = feed.known[id] || findInCollection('wish', id) ||
-        findInCollection('watched', id) || null;
-      detailBody.innerHTML = known
-        ? detailMarkup(known)
-        : '<p class="movie-empty">正在读取条目…</p>';
-      MovieSource.find(id).then(function (movie) {
-        if (!overlay.isConnected || detail.hidden) return;
-        if (!movie) {
-          if (!known) detailBody.innerHTML = '<p class="movie-empty">片库里没有这部电影的资料。</p>';
+      timer = setInterval(function () {
+        ticks += 1;
+        try {
+          const doc = frame.contentDocument;
+          if (doc && doc.readyState !== 'loading' && doc.body) {
+            finish();
+            return;
+          }
+        } catch (err) {
+          finish();
           return;
         }
-        detailBody.innerHTML = detailMarkup(movie);
-      }).catch(function () {
-        if (!known) detailBody.innerHTML = '<p class="movie-empty">片库加载失败，请稍后再试。</p>';
+        if (ticks > 400) finish();
+      }, 60);
+      guard = setTimeout(finish, 15000);
+      frame.addEventListener('load', finish);
+    }
+
+    // 豆瓣条目页在本地服务里代理后内嵌展示，资源与链接都走同源代理。
+    function openDetail(id, title) {
+      if (!id) return;
+      const doubanLink = detail.querySelector('.detail-douban');
+      if (doubanLink) {
+        doubanLink.href = 'https://movie.douban.com/subject/' + encodeURIComponent(id) + '/';
+        doubanLink.setAttribute('aria-label', '在豆瓣打开《' + (title || id) + '》的条目页');
+      }
+      detailBody.innerHTML =
+        '<div class="detail-loading" aria-hidden="true">' +
+        '<span class="detail-spinner"></span><span>正在打开豆瓣条目…</span></div>' +
+        '<iframe class="douban-frame" title="豆瓣电影条目" ' +
+        'src="' + esc(MovieSource.pageUrl(id)) + '" ' +
+        'referrerpolicy="no-referrer" loading="eager"></iframe>';
+      const frame = detailBody.querySelector('.douban-frame');
+      whenFrameReady(frame, function () {
+        const loading = detailBody.querySelector('.detail-loading');
+        if (loading) loading.remove();
+        sizeFrame();
+        setTimeout(sizeFrame, 400);
+        setTimeout(sizeFrame, 1200);
+        try {
+          const doc = frame.contentDocument;
+          if (!doc) return;
+          // 豆瓣页面里的链接统一新窗口打开，避免 iframe 内被豆瓣安全页拦住。
+          doc.addEventListener('click', function (event) {
+            const link = event.target.closest('a[href]');
+            if (!link) return;
+            const url = link.href;
+            if (!/^https?:/i.test(url)) return;
+            event.preventDefault();
+            window.open(url, '_blank', 'noopener,noreferrer');
+          }, true);
+        } catch (err) {
+          /* 同源失败时保留默认行为 */
+        }
       });
+      detail.hidden = false;
       const back = overlay.querySelector('.detail-back');
       if (back) back.focus();
     }
@@ -2504,31 +2564,61 @@
       });
     }
 
+    // 页面托管在 GitHub Pages 这类远端 https 站点时，浏览器禁止网页访问本机
+    // 127.0.0.1（Chrome 的本地网络访问保护），跨源探测必然失败，与服务有没有启动无关。
+    // 此时给一条直达本机日历的链接：那边是同源，找电影一定能用。
+    function remoteHosted() {
+      return location.protocol === 'https:' &&
+        !/^(127\.0\.0\.1|localhost|\[::1\])$/.test(location.hostname);
+    }
+
+    function localMovieUrl() {
+      return 'http://127.0.0.1:8765/?movie=1#/' + year + '/' + month + '/' + day;
+    }
+
+    function offlineNotice() {
+      const start = '找电影由本地 <code>serve.py</code> 提供：双击项目里的 ' +
+        '<code>启动人生日历.vbs</code>（不会弹命令行窗口；macOS / Linux 运行 ' +
+        '<code>python serve.py</code>），它会启动服务并自动打开日历。';
+      if (remoteHosted()) {
+        return '<span class="movie-offline">' +
+          '当前页面在远端地址（如 GitHub Pages），浏览器不允许它访问本机服务，' +
+          '所以这里连不上豆瓣片库。' + start +
+          '启动后点「在本机打开找电影」，会在本机日历里直接打开找电影这一页。' +
+          '</span>' +
+          '<a class="movie-retry movie-local" data-local href="' + esc(localMovieUrl()) + '">' +
+          '在本机打开找电影</a>' +
+          '<button type="button" class="movie-retry" data-start>已启动，重新检测</button>';
+      }
+      return '<span class="movie-offline">' + start + '</span>' +
+        '<button type="button" class="movie-retry" data-start>已启动，重新检测</button>';
+    }
+
     function renderStatus() {
       if (feed.error) {
         countEl.innerHTML = '<span class="movie-error">' + esc(feed.error) + '</span>' +
           '<button type="button" class="movie-retry" data-retry>重试</button>';
-      } else if (!feed.ready) {
-        countEl.textContent = '正在加载片库…';
+      } else if (feed.loading && !feed.items.length) {
+        countEl.textContent = '正在加载豆瓣片库…';
+      } else if (feed.online === null) {
+        countEl.textContent = '正在连接豆瓣片库…';
+      } else if (feed.online !== true) {
+        countEl.innerHTML = offlineNotice();
       } else if (!feed.items.length) {
-        countEl.textContent = filters.query.trim()
-          ? '片库里没有匹配「' + filters.query.trim() + '」的电影，换个关键词或筛选条件试试。'
-          : '没有符合条件的电影，换个筛选条件试试。';
+        countEl.textContent = feed.note || '没有符合条件的电影，换个筛选条件或关键词试试。';
       } else {
         const keyword = filters.query.trim();
-        countEl.innerHTML = '<b>' + feed.items.length + '</b>' +
-          (feed.total > feed.items.length ? ' / ' + feed.total : '') + ' 部 ·自带片库' +
+        countEl.innerHTML = '已加载 <b>' + feed.items.length + '</b>部 ·豆瓣电影片库' +
           (keyword ? ' ·关键词「' + esc(keyword) + '」' : ' ·已看过的不再推荐') +
           (feed.loading ? ' ·加载中…' : '');
-        if (feed.relaxed) {
-          countEl.innerHTML += '<span class="movie-note">该组合在片库里没有交集，已放宽「' +
-            esc(feed.relaxed) + '」条件</span>';
+        if (feed.note) {
+          countEl.innerHTML += '<span class="movie-note">' + esc(feed.note) + '</span>';
         }
       }
-      moreButton.hidden = !feed.hasMore || !!feed.error || !feed.ready;
+      moreButton.hidden = !feed.hasMore || !!feed.error;
       moreButton.disabled = feed.loading;
       moreButton.textContent = feed.loading ? '加载中…' : '加载更多';
-      sourceNote.textContent = '自带片库 · 共 ' + feed.total + ' 部 · 点海报看条目';
+      sourceNote.textContent = '豆瓣电影片库 · 点击海报查看豆瓣条目';
     }
 
     function skeleton() {
@@ -2555,8 +2645,7 @@
         });
         feed.start += items.length;
         feed.hasMore = !!page.hasMore && items.length > 0;
-        if (typeof page.total === 'number') feed.total = page.total;
-        feed.relaxed = page.relaxed || '';
+        feed.note = page.note || '';
         if (!visible.length && feed.hasMore && remaining > 0) {
           return fetchChunk(token, remaining - 1);
         }
@@ -2576,6 +2665,10 @@
         clearSkeleton();
         if (result.items.length) {
           grid.insertAdjacentHTML('beforeend', result.items.map(cardMarkup).join(''));
+          // 预先抓取最可能被点开的前两部，点开时就接近瞬开。
+          result.items.slice(0, 2).forEach(function (item) {
+            setTimeout(function () { MovieSource.preload(item.id); }, 600);
+          });
         }
         renderStatus();
       }).catch(function (error) {
@@ -2593,7 +2686,7 @@
       feed.hasMore = true;
       feed.loading = false;
       feed.error = '';
-      feed.relaxed = '';
+      feed.note = '';
       grid.innerHTML = '';
       skeleton();
       renderStatus();
@@ -2640,6 +2733,18 @@
     closeButton.addEventListener('click', close);
     moreButton.addEventListener('click', loadMore);
 
+    // 悬停/聚焦就预取条目页，点击时 iframe 直接命中缓存。
+    let preloadTimer = 0;
+    function schedulePreload(target) {
+      const open = target && target.closest ? target.closest('[data-open]') : null;
+      if (!open) return;
+      const id = open.dataset.open;
+      clearTimeout(preloadTimer);
+      preloadTimer = setTimeout(function () { MovieSource.preload(id); }, 120);
+    }
+    overlay.addEventListener('pointerover', function (event) { schedulePreload(event.target); });
+    overlay.addEventListener('focusin', function (event) { schedulePreload(event.target); });
+
     overlay.addEventListener('click', function (event) {
       const chip = event.target.closest('.filter-chip');
       if (chip) {
@@ -2662,6 +2767,24 @@
         return;
       }
 
+      const start = event.target.closest('[data-start]');
+      if (start) {
+        start.disabled = true;
+        start.textContent = '正在检测…';
+        MovieSource.retry().then(function (available) {
+          if (!overlay.isConnected) return;
+          feed.online = available;
+          if (available) {
+            resetFeed();
+          } else {
+            start.disabled = false;
+            start.textContent = '仍然连不上，再试一次';
+            renderStatus();
+          }
+        });
+        return;
+      }
+
       const lib = event.target.closest('[data-lib]');
       if (lib) {
         if (libraryKind === lib.dataset.lib && !libraryEl.hidden) closeLibrary();
@@ -2681,6 +2804,7 @@
         renderLibraryButtons();
         if (libraryKind) renderLibraryView();
         refreshEntry();
+        if (added) enrichLibraryItem(id);
         if (mark.dataset.mark === 'watched' && !filters.query.trim()) {
           // 刚标记「看过」的电影不再出现在推荐流里。
           const card = mark.closest('.movie-card');
@@ -2739,14 +2863,10 @@
       observer.observe(moreButton);
     }
 
-    MovieSource.load().then(function () {
+    MovieSource.online().then(function (available) {
       if (!overlay.isConnected) return;
-      feed.ready = true;
+      feed.online = available;
       resetFeed();
-    }).catch(function () {
-      if (!overlay.isConnected) return;
-      feed.error = MovieSource.lastError() || '片库加载失败';
-      renderStatus();
     });
     searchInput.focus();
   }
@@ -3322,6 +3442,25 @@
     else renderDay(route.y, route.m, route.d);
   }
 
+  /* 远端页面（GitHub Pages）无法访问本机服务，链接会带着 ?movie=1 跳到本机日历，
+   * 这里读完 hash 路由后直接把找电影打开，用户不用再点一次。 */
+  function openMovieFromQuery() {
+    let params;
+    try {
+      params = new URLSearchParams(location.search);
+    } catch (err) {
+      return;
+    }
+    if (params.get('movie') !== '1') return;
+    const route = parseRoute();
+    try {
+      history.replaceState(null, '', location.pathname + location.hash);
+    } catch (err) {
+      /* file:// 等环境下忽略 */
+    }
+    if (route.level === 'day') openMovieModal(route.y, route.m, route.d);
+  }
+
   /* ---------------- 启动 ---------------- */
 
   buildSwatches();
@@ -3380,5 +3519,6 @@
   });
   window.addEventListener('resize', updateWeatherOverlaySize);
   render();
+  openMovieFromQuery();
   restoreStoredHandle();
 })();
