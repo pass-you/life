@@ -356,6 +356,13 @@ window.MovieSource = (function () {
       const countries = Array.isArray(raw.production_countries)
         ? raw.production_countries.map(function (item) { return item.name; }).filter(Boolean)
         : [];
+      const languages = Array.isArray(raw.spoken_languages)
+        ? raw.spoken_languages.map(function (item) { return item.name; }).filter(Boolean)
+        : [];
+      const companies = Array.isArray(raw.production_companies)
+        ? raw.production_companies.map(function (item) { return item.name; })
+          .filter(Boolean).slice(0, 3)
+        : [];
       return {
         provider: 'tmdb',
         id: String(raw.id),
@@ -365,7 +372,7 @@ window.MovieSource = (function () {
         rating: rate(raw.vote_average),
         votes: Number(raw.vote_count) || 0,
         cover: tmdbImage(raw.poster_path, 'w500'),
-        backdrop: tmdbImage(raw.backdrop_path, 'w780'),
+        backdrop: tmdbImage(raw.backdrop_path, 'w1280'),
         overview: typeof raw.overview === 'string' ? raw.overview.trim() : '',
         runtime: Number(raw.runtime) || 0,
         genres: genreLabels(raw.genre_ids, raw.genres),
@@ -373,6 +380,24 @@ window.MovieSource = (function () {
         directors: crew.filter(function (item) { return item.job === 'Director'; })
           .map(function (item) { return item.name; }).slice(0, 3),
         cast: cast.slice(0, 6).map(function (item) { return item.name; }),
+        castDetails: cast.slice(0, 8).map(function (item) {
+          return {
+            name: item.name || '',
+            character: item.character || '',
+            profile: tmdbImage(item.profile_path, 'w185')
+          };
+        }),
+        crewWriters: crew.filter(function (item) {
+          return item.department === 'Writing' || item.job === 'Writer' || item.job === 'Screenplay';
+        }).map(function (item) { return item.name; }).slice(0, 3),
+        releaseDate: raw.release_date || '',
+        languages: languages,
+        tagline: typeof raw.tagline === 'string' ? raw.tagline.trim() : '',
+        status: raw.status || '',
+        budget: Number(raw.budget) || 0,
+        revenue: Number(raw.revenue) || 0,
+        companies: companies,
+        homepage: raw.homepage || '',
         imdbId: raw.imdb_id || '',
         external: SITE + encodeURIComponent(raw.id)
       };
@@ -528,13 +553,28 @@ window.MovieSource = (function () {
           rating: rate(raw.imdbRating),
           votes: Number(String(raw.imdbVotes || '').replace(/[^\d]/g, '')) || 0,
           cover: raw.poster || '',
-          backdrop: raw.background || '',
+          backdrop: String(raw.background || '').replace('/background/medium/', '/background/large/'),
           overview: typeof raw.description === 'string' ? raw.description.trim() : '',
           runtime: minutes,
           genres: cineGenres(raw.genre || raw.genres),
           region: String(raw.country || ''),
           directors: Array.isArray(raw.director) ? raw.director.slice(0, 3) : [],
           cast: Array.isArray(raw.cast) ? raw.cast.slice(0, 6) : [],
+          castDetails: (Array.isArray(raw.cast) ? raw.cast.slice(0, 8) : []).map(function (name) {
+            return { name: String(name || ''), character: '', profile: '' };
+          }),
+          crewWriters: Array.isArray(raw.writer) ? raw.writer.slice(0, 3) : [],
+          releaseDate: String(raw.released || ''),
+          languages: String(raw.language || '').split(',').map(function (name) {
+            return name.trim();
+          }).filter(Boolean),
+          tagline: '',
+          status: '',
+          budget: 0,
+          revenue: 0,
+          companies: [],
+          homepage: String(raw.website || ''),
+          awards: String(raw.awards || ''),
           imdbId: String(raw.imdb_id || ''),
           // Cinemeta 同时带 TMDB 数字 id：这是把英文条目和中文条目认成同一部片的桥。
           tmdbId: /^\d{1,9}$/.test(String(raw.moviedb_id || '')) ? String(raw.moviedb_id) : '',

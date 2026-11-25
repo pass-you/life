@@ -2770,26 +2770,67 @@
         const runtime = movie.runtime ? Math.round(movie.runtime) + ' 分钟' : '';
         const score = movie.rating ? movie.rating.toFixed(1) : '';
         const votes = movie.votes ? movie.votes.toLocaleString('zh-CN') + ' 人评分' : '';
-        const tags = (movie.genres || []).join(' · ');
+        const genres = movie.genres || [];
         const backdrop = movie.backdrop || movie.cover || '';
+        const release = String(movie.releaseDate || '').slice(0, 10);
+        const releaseLabel = /^\d{4}-\d{2}-\d{2}$/.test(release)
+          ? (function () {
+            const parts = release.split('-');
+            return Number(parts[0]) + ' 年 ' + Number(parts[1]) + ' 月 ' + Number(parts[2]) + ' 日';
+          })()
+          : '';
+        const money = function (value) {
+          const amount = Number(value) || 0;
+          if (amount >= 1e8) return '$' + (amount / 1e8).toFixed(2).replace(/\.?0+$/, '') + ' 亿';
+          if (amount >= 1e4) return '$' + (amount / 1e4).toFixed(1).replace(/\.0$/, '') + ' 万';
+          return amount ? '$' + amount.toLocaleString('en-US') : '';
+        };
         // 评分环按 10 分制折算，弧长与 dashoffset 在 JS 里算好，避免 CSS calc 的兼容问题。
         const ringCirc = 2 * Math.PI * 20.5;
         const ringOffset = (ringCirc * (1 - Math.min(10, Math.max(0, movie.rating || 0)) / 10))
           .toFixed(2);
-        const chips = function (names) {
-          return names.map(function (name) {
-            return '<span class="credit-chip">' + esc(name) + '</span>';
-          }).join('');
+        const fact = function (label, valueHtml) {
+          return valueHtml
+            ? '<div class="fact-row"><dt>' + esc(label) + '</dt><dd>' + valueHtml + '</dd></div>'
+            : '';
         };
+        const facts =
+          fact('上映日期', esc(releaseLabel || movie.year || '')) +
+          fact('片长', esc(runtime)) +
+          fact('语言', esc((movie.languages || []).join(' / '))) +
+          fact('制片国家', esc(movie.region || '')) +
+          fact('导演', esc((movie.directors || []).join(' / '))) +
+          fact('编剧', esc((movie.crewWriters || []).join(' / '))) +
+          fact('状态', esc(movie.status || '')) +
+          fact('制作公司', esc((movie.companies || []).join(' / '))) +
+          fact('预算', esc(money(movie.budget))) +
+          fact('票房', esc(money(movie.revenue))) +
+          fact('获奖', esc(movie.awards || ''));
+        const people = (movie.castDetails && movie.castDetails.length
+          ? movie.castDetails
+          : (movie.cast || []).map(function (name) {
+            return { name: name, character: '', profile: '' };
+          })).filter(function (person) { return person && person.name; });
+        const castCards = people.map(function (person) {
+          return '<li class="cast-card">' +
+            (person.profile
+              ? '<img class="cast-avatar" src="' + esc(person.profile) + '" alt="" loading="lazy" decoding="async">'
+              : '<span class="cast-avatar cast-avatar--plain" aria-hidden="true">' +
+                esc(person.name.slice(0, 1)) + '</span>') +
+            '<span class="cast-name">' + esc(person.name) + '</span>' +
+            (person.character
+              ? '<span class="cast-role">饰 ' + esc(person.character) + '</span>' : '') +
+            '</li>';
+        }).join('');
         detailBody.innerHTML =
           '<article class="movie-fiche">' +
-          '<header class="fiche-hero">' +
+          '<header class="fiche-hero' + (backdrop ? '' : ' is-plain') + '">' +
           (backdrop
-            ? '<div class="fiche-shot" style="background-image:url(' +
-              esc(backdrop) + ')" aria-hidden="true"></div>'
+            ? '<div class="fiche-shot-wrap" aria-hidden="true"><div class="fiche-shot" style="background-image:url(' +
+              esc(backdrop) + ')"></div></div>'
             : '') +
           '<div class="fiche-veil" aria-hidden="true"></div>' +
-          '<div class="fiche-hero-main">' +
+          '<div class="fiche-hero-inner">' +
           '<div class="fiche-posterbox">' +
           (movie.cover
             ? '<img class="fiche-poster" src="' + esc(movie.cover) + '" alt="《' +
@@ -2797,11 +2838,18 @@
             : '<div class="fiche-poster is-plain">' + esc(movie.title.slice(0, 4)) + '</div>') +
           '</div>' +
           '<div class="fiche-info">' +
+          '<p class="fiche-kicker">' + (movie.provider === 'cinemeta' ? 'Cinemeta 片库' : 'TMDB 片库') +
+          (movie.year ? ' · ' + esc(movie.year) : '') + '</p>' +
           '<h2 class="fiche-title">' + esc(movie.title) + '</h2>' +
           (movie.originalTitle && movie.originalTitle !== movie.title
             ? '<p class="fiche-original">' + esc(movie.originalTitle) + '</p>' : '') +
-          '<p class="fiche-meta">' + esc(metaLine([movie.year, runtime, movie.region])) + '</p>' +
-          (tags ? '<p class="fiche-genres">' + esc(tags) + '</p>' : '') +
+          '<p class="fiche-meta">' +
+          esc(metaLine([movie.year, releaseLabel, runtime, movie.region])) + '</p>' +
+          (genres.length
+            ? '<div class="fiche-tags">' + genres.map(function (name) {
+              return '<span class="fiche-tag">' + esc(name) + '</span>';
+            }).join('') + '</div>'
+            : '') +
           '<div class="fiche-foot">' +
           (score
             ? '<div class="fiche-score">' +
@@ -2820,30 +2868,36 @@
           markButton('watched', movie, '看过') + '</div>' +
           '</div></div></div></header>' +
           '<div class="fiche-body">' +
+          '<div class="fiche-main">' +
+          (movie.tagline
+            ? '<p class="fiche-tagline">“' + esc(movie.tagline) + '”</p>' : '') +
           '<section class="fiche-section">' +
-          '<h3 class="fiche-label">简介</h3>' +
+          '<h3 class="fiche-label">剧情简介</h3>' +
           '<p class="fiche-overview">' +
           esc(movie.overview || '这部片暂时没有简介。') + '</p></section>' +
-          (movie.directors.length || movie.cast.length
+          (castCards
             ? '<section class="fiche-section">' +
-              '<h3 class="fiche-label">演职人员</h3><dl class="fiche-credits">' +
-              (movie.directors.length
-                ? '<div class="credit-row"><dt>导演</dt><dd>' +
-                  chips(movie.directors) + '</dd></div>' : '') +
-              (movie.cast.length
-                ? '<div class="credit-row"><dt>主演</dt><dd>' + chips(movie.cast) +
-                  '</dd></div>' : '') +
-              '</dl></section>'
+              '<h3 class="fiche-label">主要演职员</h3>' +
+              '<ul class="cast-strip">' + castCards + '</ul></section>'
+            : '') +
+          '</div>' +
+          '<aside class="fiche-side">' +
+          (facts
+            ? '<section class="fact-card"><h3 class="fact-title">影片资料</h3>' +
+              '<dl class="fact-list">' + facts + '</dl></section>'
             : '') +
           '<div class="fiche-links">' +
-          '<a class="btn btn-sm" href="' + esc(MovieSource.doubanSearchUrl(movie.title)) +
-          '" target="_blank" rel="noopener noreferrer">在豆瓣搜《' +
-          esc(movie.title) + '》</a>' +
-          '<a class="btn btn-sm btn-primary" href="' +
+          '<a class="btn btn-primary fiche-link" href="' +
           esc(movie.external || MovieSource.pageUrl(movie.id)) +
           '" target="_blank" rel="noopener noreferrer">' +
-          (movie.provider === 'cinemeta' ? 'IMDb 条目' : 'TMDB 条目') + '</a>' +
-          '</div></div></article>';
+          (movie.provider === 'cinemeta' ? '在 IMDb 查看条目 ↗' : '在 TMDB 查看条目 ↗') + '</a>' +
+          (movie.homepage
+            ? '<a class="btn fiche-link" href="' + esc(movie.homepage) +
+              '" target="_blank" rel="noopener noreferrer">官方网站 ↗</a>' : '') +
+          '<a class="btn fiche-link" href="' + esc(MovieSource.doubanSearchUrl(movie.title)) +
+          '" target="_blank" rel="noopener noreferrer">去豆瓣搜《' +
+          esc(movie.title) + '》</a>' +
+          '</div></aside></div></article>';
       }).catch(function (error) {
         if (detail.hidden) return;
         detailBody.innerHTML = '<div class="detail-loading"><span>' +
@@ -2930,6 +2984,7 @@
       '<div class="movie-foot"><button type="button" class="movie-more" id="movie-more" hidden>加载更多</button></div>' +
       '</div>' +
       '<div class="movie-library" id="movie-library" hidden></div>' +
+      '</div>' +
       '</div>' +
       '<div class="movie-detail" id="movie-detail" hidden>' +
       '<div class="detail-bar"><button type="button" class="detail-back" data-detail-close>← 返回片库</button>' +
