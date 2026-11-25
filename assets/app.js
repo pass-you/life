@@ -2239,8 +2239,10 @@
       note: ''
     };
 
-    function watchedIds() {
-      return collectionList('watched').map(function (item) { return item.id; }).filter(Boolean);
+    // 想看 / 看过都算「已收藏」，推荐流不再推它们，但搜索和收藏列表不受影响。
+    function savedIds() {
+      return collectionList('wish').concat(collectionList('watched'))
+        .map(function (item) { return item.id; }).filter(Boolean);
     }
 
     function isIn(kind, id) {
@@ -2772,6 +2774,9 @@
         countEl.textContent = feed.note || '没有符合条件的电影，换个筛选条件或关键词试试。';
       } else if (feed.note) {
         countEl.innerHTML = '<span class="movie-note">' + esc(feed.note) + '</span>';
+      } else if (autoSlice) {
+        countEl.innerHTML = '<span class="movie-note">随便逛逛：' + esc(filters.genre) + ' · ' +
+          esc(filters.decade) + '，点「全部」回到全库</span>';
       } else {
         countEl.hidden = true;
         countEl.innerHTML = '';
@@ -2802,7 +2807,7 @@
         items.forEach(function (item) {
           if (item && item.id) feed.known[item.id] = item;
         });
-        const skip = filters.query.trim() ? [] : watchedIds();
+        const skip = filters.query.trim() ? [] : savedIds();
         const visible = items.filter(function (item) {
           return item && item.id && skip.indexOf(item.id) < 0;
         });
@@ -2848,20 +2853,53 @@
       });
     }
 
+    // 豆瓣这个接口能稳定翻到第 28 页（start 540），再深就会 403。
+    const MOVIE_DEPTH_PAGES = 28;
+
     // 「换一批」用随机起始页，绕开已经看过的几页，得到一批全新的推荐。
     const usedStarts = {};
     function pickFreshStart() {
       const candidates = [];
-      for (let page = 0; page < 25; page += 1) {
+      for (let page = 0; page < MOVIE_DEPTH_PAGES; page += 1) {
         if (!usedStarts[page * MOVIE_PAGE]) candidates.push(page * MOVIE_PAGE);
       }
       if (!candidates.length) {
         Object.keys(usedStarts).forEach(function (key) { delete usedStarts[key]; });
-        for (let page = 0; page < 25; page += 1) candidates.push(page * MOVIE_PAGE);
+        for (let page = 0; page < MOVIE_DEPTH_PAGES; page += 1) candidates.push(page * MOVIE_PAGE);
       }
       const picked = candidates[Math.floor(Math.random() * candidates.length)];
       usedStarts[picked] = true;
       return picked;
+    }
+
+    // 「全部」时每一批只在一个切片里，看久了永远是同一批热门片；
+    // 换一批就随机换一个「类型 × 年代」切片，一次覆盖的范围扩大几十倍。
+    let autoSlice = false;
+
+    function syncChips(type) {
+      Array.prototype.forEach.call(overlay.querySelectorAll('[data-' + type + ']'), function (item) {
+        const on = item.textContent === filters[type];
+        item.classList.toggle('is-active', on);
+        item.setAttribute('aria-pressed', String(on));
+      });
+    }
+
+    function pickSlice() {
+      const genres = MOVIE_GENRES.filter(function (item) { return item !== '全部'; });
+      const decades = MOVIE_DECADES.filter(function (item) { return item.label !== '全部'; });
+      let genre = filters.genre;
+      let decade = filters.decade;
+      // 同一个切片连续出现时再抽一次，避免连点两下看到的还是同一批。
+      for (let i = 0; i < 12; i += 1) {
+        genre = genres[Math.floor(Math.random() * genres.length)];
+        decade = decades[Math.floor(Math.random() * decades.length)].label;
+        if (genre !== filters.genre || decade !== filters.decade) break;
+      }
+      filters.genre = genre;
+      filters.decade = decade;
+      autoSlice = true;
+      syncChips('genre');
+      syncChips('decade');
     }
 
     function resetFeed(startAt) {
@@ -2937,6 +2975,7 @@
       if (chip) {
         const type = chip.dataset.genre ? 'genre' : chip.dataset.region ? 'region' : 'decade';
         filters[type] = chip.textContent;
+        autoSlice = false;
         const row = chip.parentNode;
         Array.prototype.forEach.call(row.children, function (item) {
           const on = item === chip;
@@ -2993,11 +3032,11 @@
         if (libraryKind) renderLibraryView();
         refreshEntry();
         if (added) enrichLibraryItem(id);
-        if (mark.dataset.mark === 'watched' && !filters.query.trim()) {
-          // 刚标记「看过」的电影不再出现在推荐流里。
+        if (added && !libraryKind && !filters.query.trim()) {
+          // 刚标记「想看」/「看过」的电影不再留在推荐流里。
           const card = mark.closest('.movie-card');
           if (card) card.remove();
-          if (added) feed.items = feed.items.filter(function (item) { return item.id !== id; });
+          feed.items = feed.items.filter(function (item) { return item.id !== id; });
           renderStatus();
         }
         return;
@@ -3043,6 +3082,10 @@
 
     shuffleButton.addEventListener('click', function () {
       if (libraryKind) return;
+      // 用户自己挑过类型/年代就尊重他的选择；只有仍是「全部」或上一次是自动切片时才换切片。
+      const untouched = filters.genre === '全部' && filters.region === '全部' &&
+        filters.decade === '全部';
+      if (!filters.query.trim() && (untouched || autoSlice)) pickSlice();
       resetFeed(pickFreshStart());
     });
 
