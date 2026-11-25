@@ -61,6 +61,7 @@ window.MovieSource = (function () {
   function retry() {
     activeBase = null;
     probe = null;
+    memo.clear();
     return online();
   }
 
@@ -87,6 +88,20 @@ window.MovieSource = (function () {
     return params;
   }
 
+  // 列表/搜索响应在内存里留 5 分钟：打开页面时预热的那一页，点「找电影」立刻就能渲染，
+  // 不用等豆瓣往返。过期后重新请求，失败的条目立刻丢掉，不会缓存错误。
+  const MEMO_TTL = 5 * 60 * 1000;
+  const memo = new Map();
+
+  function memoJSON(path) {
+    const hit = memo.get(path);
+    if (hit && Date.now() - hit.at < MEMO_TTL) return hit.promise;
+    const promise = getJSON(path);
+    memo.set(path, { at: Date.now(), promise: promise });
+    promise.catch(function () { memo.delete(path); });
+    return promise;
+  }
+
   function discover(options) {
     const params = paramsOf(options);
     if (options.sort) params.set('sort', options.sort);
@@ -94,7 +109,7 @@ window.MovieSource = (function () {
     if (options.countries) params.set('countries', options.countries);
     if (options.from) params.set('from', String(options.from));
     if (options.to) params.set('to', String(options.to));
-    return getJSON('discover?' + params.toString());
+    return memoJSON('discover?' + params.toString());
   }
 
   function search(options) {
@@ -105,7 +120,7 @@ window.MovieSource = (function () {
     if (options.countries) params.set('countries', options.countries);
     if (options.from) params.set('from', String(options.from));
     if (options.to) params.set('to', String(options.to));
-    return getJSON('search?' + params.toString());
+    return memoJSON('search?' + params.toString());
   }
 
   function detail(id) {
@@ -133,9 +148,30 @@ window.MovieSource = (function () {
     });
   }
 
+  // 页面打开时先在后台探测服务并预取「找电影」的首屏（综合排序第一页），
+  // 用户点胶片按钮时列表已经在内存里，弹层立即出内容。
+  let warmed = false;
+  function warm() {
+    if (warmed) return Promise.resolve(false);
+    warmed = true;
+    return online().then(function (ok) {
+      if (!ok) {
+        warmed = false;
+        return false;
+      }
+      return discover({ start: 0, sort: 'U', genres: '全部', countries: '全部' })
+        .then(function () { return true; })
+        .catch(function () { return false; });
+    }).catch(function () {
+      warmed = false;
+      return false;
+    });
+  }
+
   return {
     online: online,
     retry: retry,
+    warm: warm,
     discover: discover,
     search: search,
     detail: detail,

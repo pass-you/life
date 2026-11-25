@@ -2156,12 +2156,28 @@
     return id ? 'https://movie.douban.com/subject/' + encodeURIComponent(id) + '/' : '';
   }
 
+  // 打开日页面时顺手把「找电影」的首屏拉进内存：用户点胶片按钮时列表已经就绪。
+  // 整个会话只做一次，用空闲时段发起，不抢首屏渲染。
+  let movieWarmed = false;
+  function warmMovieLibrary() {
+    if (movieWarmed) return;
+    movieWarmed = true;
+    const start = function () {
+      MovieSource.warm().then(function (ok) {
+        if (!ok) movieWarmed = false;
+      });
+    };
+    if ('requestIdleCallback' in window) requestIdleCallback(start, { timeout: 2500 });
+    else setTimeout(start, 800);
+  }
+
   function wireMovieEntry(year, month, day) {
     const button = app.querySelector('[data-movies-open]');
     if (!button) return;
     button.addEventListener('click', function () {
       openMovieModal(year, month, day);
     });
+    warmMovieLibrary();
   }
 
   function openMovieModal(year, month, day) {

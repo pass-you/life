@@ -32,6 +32,7 @@ import json
 import mimetypes
 import os
 import re
+import shutil
 import socket
 import sys
 import threading
@@ -1041,6 +1042,109 @@ def open_browser(address: str) -> None:
         sys.stderr.write("无法自动打开浏览器（%s），请手动访问 %s\n" % (exc, address))
 
 
+AUTOSTART_FILENAME = "人生日历.vbs"
+
+
+def autostart_target() -> "Path | None":
+    """Windows 启动文件夹里那个启动项文件的完整路径；其它系统返回 None。"""
+    appdata = os.environ.get("APPDATA", "").strip()
+    if not appdata:
+        return None
+    return (Path(appdata) / "Microsoft" / "Windows" / "Start Menu" / "Programs"
+            / "Startup" / AUTOSTART_FILENAME)
+
+
+def pythonw_executable() -> Path:
+    """开机启动项里写哪个解释器。
+
+    优先 PATH 里真实安装的 Python，跳过 Microsoft Store 的 WindowsApps 别名，
+    也跳过 MiCO 桌面运行时（`.mico\\desktop-runtimes\\…`，版本目录带哈希，
+    升级或清理后旧路径就失效了），最后才退回当前进程的解释器。
+    """
+    def stable(path: str) -> bool:
+        lowered = path.lower()
+        return "\\windowsapps\\" not in lowered and "\\desktop-runtimes\\" not in lowered
+
+    # shutil.which 只返回 PATH 里第一个命中项，而第一个往往正是 MiCO 运行时；
+    # 逐目录找，第一个「真实的」安装胜出。
+    folders = [item.strip().strip('"') for item in os.environ.get("PATH", "").split(os.pathsep)]
+    for name in ("pythonw.exe", "python.exe"):
+        for folder in folders:
+            if not folder:
+                continue
+            found = shutil.which(name, path=folder)
+            if not found or not stable(found):
+                continue
+            exe = Path(found)
+            if exe.name.lower() == "pythonw.exe":
+                return exe
+            candidate = exe.with_name("pythonw.exe")
+            if candidate.exists():
+                return candidate
+
+    exe = Path(sys.executable)
+    if exe.name.lower() == "pythonw.exe":
+        return exe
+    candidate = exe.with_name("pythonw.exe")
+    return candidate if candidate.exists() else exe
+
+
+def autostart_script() -> str:
+    """启动项内容写成绝对路径：它躺在启动文件夹里，不能用相对目录找 serve.py。"""
+    exe = pythonw_executable()
+    script = BASE_DIR / "serve.py"
+    return "\r\n".join([
+        "'人生日历 · 开机自动启动本地服务（由 serve.py --install-autostart 生成）",
+        "'删除本文件即可取消开机自启，或运行：python serve.py --remove-autostart",
+        "Option Explicit",
+        "Dim fso, shell, q",
+        'Set fso = CreateObject("Scripting.FileSystemObject")',
+        'If Not fso.FileExists("%s") Then WScript.Quit 0' % script,
+        'Set shell = CreateObject("WScript.Shell")',
+        "q = Chr(34)",
+        'shell.CurrentDirectory = "%s"' % BASE_DIR,
+        # --no-browser：开机时后台起服务即可，不替用户打开浏览器。
+        "shell.Run q & \"%s\" & q & \" \" & q & \"%s\" & q & \" --no-browser\", 0, False"
+        % (exe, script),
+        "",
+    ])
+
+
+def install_autostart() -> int:
+    target = autostart_target()
+    if target is None:
+        sys.stderr.write("只能在 Windows 上设置开机自启（未找到 APPDATA 启动文件夹）。\n"
+                         "macOS 把 `python3 serve.py --no-browser` 加入登录项即可。\n")
+        return 1
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        # UTF-16：路径里可能有中文，VBS 也只有带 BOM 才认得 UTF-16。
+        target.write_text(autostart_script(), encoding="utf-16", newline="")
+    except OSError as exc:
+        sys.stderr.write("写入启动项失败：%s\n" % exc)
+        return 1
+    print("已设置开机自动启动：%s" % target)
+    print("取消：python serve.py --remove-autostart")
+    return 0
+
+
+def remove_autostart() -> int:
+    target = autostart_target()
+    if target is None:
+        sys.stderr.write("只能在 Windows 上取消开机自启（未找到 APPDATA 启动文件夹）。\n")
+        return 1
+    try:
+        target.unlink()
+    except FileNotFoundError:
+        print("开机自启本来就没有设置。")
+        return 0
+    except OSError as exc:
+        sys.stderr.write("删除启动项失败：%s\n" % exc)
+        return 1
+    print("已取消开机自动启动。")
+    return 0
+
+
 def main() -> int:
     setup_stdio()
     global SERVER
@@ -1048,7 +1152,15 @@ def main() -> int:
     parser.add_argument("--host", default="127.0.0.1", help="监听地址，默认 127.0.0.1")
     parser.add_argument("--port", type=int, default=8765, help="端口，默认 8765")
     parser.add_argument("--no-browser", action="store_true", help="启动后不自动打开浏览器")
+    parser.add_argument("--install-autostart", action="store_true",
+                        help="设为开机自动在后台启动（Windows 启动文件夹）")
+    parser.add_argument("--remove-autostart", action="store_true", help="取消开机自动启动")
     args = parser.parse_args()
+
+    if args.install_autostart:
+        return install_autostart()
+    if args.remove_autostart:
+        return remove_autostart()
 
     address = "http://%s:%d/" % ("127.0.0.1" if args.host in ("0.0.0.0", "::") else args.host, args.port)
 
