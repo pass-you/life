@@ -672,6 +672,28 @@ window.MovieSource = (function () {
     return online();
   }
 
+  // 当前片源能翻到的最大页码。两个片源都是接口硬上限：TMDB 500 页 × 20 条，
+  // Cinemeta 200 页 × 50 条，已经无法再往深处翻。
+  function maxPage() {
+    return provider === 'cinemeta' ? CINE_MAX_PAGE : MAX_PAGE;
+  }
+
+  // 首屏取页：先探第 1 页拿到片库真实页数，再在 1..totalPages 里随机。
+  // 范围取满整个片库而不是前若干页的热门池 —— 深页里评分不高但值得一看的冷门片
+  // 也有机会被推到首屏，觉得太冷门时用评分筛选收窄即可。
+  function startPage() {
+    return online().then(function (ok) {
+      if (!ok) return { ok: false, totalPages: 0 };
+      return discover({ page: 1, sort: 'popularity.desc' }).then(function (first) {
+        const cap = maxPage();
+        const total = Math.max(1, Math.min(cap, Number(first && first.totalPages) || cap));
+        return { ok: true, totalPages: total };
+      }).catch(function () {
+        return { ok: false, totalPages: 0 };
+      });
+    });
+  }
+
   // 预热一页：首屏会随机跳到某一页，预热的也必须是同一页才有意义，
   // 所以由调用方把页号传进来（缺省第 1 页）。
   function warm(page) {
@@ -704,6 +726,8 @@ window.MovieSource = (function () {
   return {
     GENRES: GENRES,
     MAX_PAGE: MAX_PAGE,
+    maxPage: maxPage,
+    startPage: startPage,
     online: online,
     retry: retry,
     warm: warm,
