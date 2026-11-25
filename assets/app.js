@@ -887,6 +887,16 @@
       setNotice('当前浏览器不支持自动同步，请使用「导出副本」', true);
       return;
     }
+    setNotice('正在打开保存位置选择器…', false);
+    // 部分环境里 showSaveFilePicker 既不弹窗也不报错；给一个带条件的提示，
+    // 不打断仍在挑选文件的人（对话框通常会让窗口失焦）。
+    let hinted = false;
+    const hintTimer = setTimeout(function () {
+      hinted = true;
+      if (document.hasFocus() && !fileHandle) {
+        setNotice('如果没看到保存对话框：当前浏览器无法自动同步，请用「导出副本」保存文件', true);
+      }
+    }, 2500);
     let handle;
     try {
       handle = await window.showSaveFilePicker({
@@ -897,10 +907,15 @@
         }]
       });
     } catch (err) {
-      if (err && err.name === 'AbortError') return;
-      setNotice('无法选择保存位置：' + describeFileError(err), true);
+      clearTimeout(hintTimer);
+      if (err && err.name === 'AbortError') {
+        if (!hinted) setNotice('已取消选择保存位置 ·修改可用「导出副本」保存', false);
+        return;
+      }
+      setNotice('无法选择保存位置：' + describeFileError(err) + ' ·可改用「导出副本」', true);
       return;
     }
+    clearTimeout(hintTimer);
     try {
       await writeHandle(handle, buildMarkdown());
     } catch (err) {
@@ -910,32 +925,29 @@
     await attachHandle(handle, false);
   }
 
-  async function openCalendarFile() {
-    if (!supportsFsa) {
+  // 打开文件统一走 <input type="file">：所有浏览器、HTTPS 静态托管
+  // （GitHub Pages）和 file:// 下都能用；showOpenFilePicker 在部分环境
+  // 不弹窗也不报错，用户看到的就是「点了没反应」。
+  let inputNoticeTimer = 0;
+
+  function pickWithInput(message) {
+    if (dirty && !window.confirm('导入会替换当前未同步的内容，继续吗？')) return;
+    if (message) setNotice(message, false);
+    fileInput.value = '';
+    try {
       fileInput.click();
+    } catch (err) {
+      setNotice('无法打开文件选择：' + describeFileError(err), true);
       return;
     }
-    if (dirty && !window.confirm('打开文件会替换当前未同步的内容，继续吗？')) return;
-    let handles;
-    try {
-      handles = await window.showOpenFilePicker({
-        multiple: false,
-        types: [{
-          description: 'Markdown',
-          accept: { 'text/markdown': ['.md', '.markdown'], 'text/plain': ['.txt'] }
-        }]
-      });
-    } catch (err) {
-      if (err && err.name === 'AbortError') return;
-      setNotice('无法打开文件：' + describeFileError(err), true);
-      return;
-    }
-    if (!handles || !handles.length) return;
-    try {
-      await attachHandle(handles[0], true);
-    } catch (err) {
-      setNotice(err.message || '打开失败，请确认文件格式', true);
-    }
+    clearTimeout(inputNoticeTimer);
+    inputNoticeTimer = setTimeout(function () {
+      setNotice('如果没看到文件选择框：可以把 .md 文件直接拖进页面，或改用 Chrome / Edge 打开', false);
+    }, 8000);
+  }
+
+  function openCalendarFile() {
+    pickWithInput('请选择要打开的 Markdown 文件…');
   }
 
   async function reconnectHandle() {
@@ -3216,10 +3228,52 @@
       currentKey = '';
       render();
       const stats = countData();
-      setNotice('已导入 ' + file.name + ' · 未连接文件，修改需导出' +
+      setNotice('已导入 ' + file.name + ' · 未连接文件' +
+        (supportsFsa ? '，点「选择保存位置」选中该文件即可自动同步' : '，修改需导出') +
         (parsed.warnings ? '，跳过 ' + parsed.warnings + ' 处异常日期' : ''), false);
     }).catch(function (err) {
       setNotice(err && err.message ? err.message : '导入失败，请确认文件格式', true);
+    });
+  }
+
+  // 拖拽导入：所有浏览器都能用，也是「打开 MD」没响应时的可靠退路。
+  function setupDropImport() {
+    const hint = document.createElement('div');
+    hint.className = 'drop-hint';
+    hint.textContent = '松开鼠标，导入 Markdown 文件';
+    hint.hidden = true;
+    document.body.appendChild(hint);
+
+    function hasFiles(event) {
+      const types = event.dataTransfer && event.dataTransfer.types;
+      if (!types) return false;
+      return Array.prototype.indexOf.call(types, 'Files') !== -1;
+    }
+
+    let depth = 0;
+    document.addEventListener('dragenter', function (event) {
+      if (!hasFiles(event)) return;
+      event.preventDefault();
+      depth += 1;
+      hint.hidden = false;
+    });
+    document.addEventListener('dragover', function (event) {
+      if (!hasFiles(event)) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'copy';
+    });
+    document.addEventListener('dragleave', function (event) {
+      if (!hasFiles(event)) return;
+      depth = Math.max(0, depth - 1);
+      if (depth === 0) hint.hidden = true;
+    });
+    document.addEventListener('drop', function (event) {
+      if (!hasFiles(event)) return;
+      event.preventDefault();
+      depth = 0;
+      hint.hidden = true;
+      const file = event.dataTransfer.files && event.dataTransfer.files[0];
+      if (file) importTextFile(file);
     });
   }
 
@@ -3323,6 +3377,7 @@
   exportBtn.addEventListener('click', exportMarkdown);
 
   fileInput.addEventListener('change', function () {
+    clearTimeout(inputNoticeTimer);
     const file = fileInput.files && fileInput.files[0];
     fileInput.value = '';
     importTextFile(file);
@@ -3335,6 +3390,14 @@
       else exportMarkdown();
     }
   });
+
+  setupDropImport();
+
+  // 移动端系统文件选择器常按 MIME 过滤：只写 text/markdown 时 .md 可能灰掉，
+  // 表现为「点了没反应」。手机上放开类型，导入时再校验内容。
+  if (/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)) {
+    fileInput.accept = '*/*';
+  }
 
   if (!supportsFsa) {
     saveAsBtn.hidden = true;
