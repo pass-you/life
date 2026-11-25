@@ -56,16 +56,6 @@ window.MovieSource = (function () {
     return !!tag && tag !== '全部' && movie.tags.indexOf(tag) >= 0;
   }
 
-  function decadeOf(year, decades) {
-    const value = Number(year);
-    if (!value) return '';
-    for (let i = 0; i < decades.length; i += 1) {
-      const item = decades[i];
-      if (item.from && value >= item.from && value <= item.to) return item.label;
-    }
-    return '';
-  }
-
   function keywordHit(movie, keyword) {
     if (!keyword) return true;
     const needle = keyword.toLowerCase();
@@ -136,10 +126,6 @@ window.MovieSource = (function () {
     return query(options);
   }
 
-  function search(options) {
-    return query(options);
-  }
-
   function find(id) {
     return load().then(function (rows) {
       for (let i = 0; i < rows.length; i += 1) {
@@ -149,10 +135,6 @@ window.MovieSource = (function () {
     });
   }
 
-  function detail(id) {
-    return find(id);
-  }
-
   // 海报存在仓库里，直接给相对路径；没有海报的片子由 UI 用片名兜底。
   function poster(movie) {
     if (!movie) return '';
@@ -160,16 +142,6 @@ window.MovieSource = (function () {
       return movie.poster.indexOf('/') >= 0 ? movie.poster : 'assets/library/p/' + movie.poster;
     }
     return '';
-  }
-
-  function online() {
-    return load().then(function () { return true; }).catch(function () { return false; });
-  }
-
-  function retry() {
-    library = null;
-    loading = null;
-    return online();
   }
 
   // 打开日页面时预热一次片库，点胶片按钮时列表已经在内存里。
@@ -189,12 +161,8 @@ window.MovieSource = (function () {
 
   return {
     load: load,
-    online: online,
-    retry: retry,
     warm: warm,
     discover: discover,
-    search: search,
-    detail: detail,
     find: find,
     poster: poster,
     lastError: lastError
