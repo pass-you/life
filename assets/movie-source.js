@@ -638,12 +638,15 @@ window.MovieSource = (function () {
     }
     probing = cineRequest(cineUrl('top', {})).then(function () {
       provider = 'cinemeta';
+      lastError = '';
       return true;
-    }).catch(function () {
+    }).catch(function (error) {
       // 免 Key 源也连不上时，试试已保存的 Key（如果用户填过）。
+      lastError = error && error.message ? error.message : '网络异常';
       if (!key) return false;
       provider = 'tmdb';
       return request(tmdbUrl('configuration', {})).then(function () {
+        lastError = 'Cinemeta 连接失败，已回退 TMDB 中文库';
         return true;
       }).catch(function () {
         return false;
@@ -701,6 +704,7 @@ window.MovieSource = (function () {
     doubanSearchUrl: doubanSearchUrl,
     preload: preload,
     setKey: setKey,
+    setProvider: setProvider,
     hasKey: hasKey,
     state: state,
     provider: function () { return provider; }

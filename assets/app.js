@@ -2546,10 +2546,10 @@
       '<p class="sub">' + year + ' 年 ' + month + ' 月 ' + day + ' 日 ·<span id="movie-source-note">正在连接片库…</span></p>' +
       '</div><div class="movie-head-actions">' +
       '<div class="movie-source-switch" role="group" aria-label="选择片源">' +
-      '<button type="button" class="movie-source-btn" data-src="tmdb" aria-pressed="false">' +
-      'TMDB · 中文</button>' +
-      '<button type="button" class="movie-source-btn" data-src="cinemeta" aria-pressed="false">' +
-      '免 Key · 英文</button>' +
+      '<button type="button" class="movie-source-btn" data-src="tmdb" aria-pressed="false" ' +
+      'title="TMDB 中文片库（需要 API Key）">TMDB · 中文</button>' +
+      '<button type="button" class="movie-source-btn" data-src="cinemeta" aria-pressed="false" ' +
+      'title="Cinemeta 英文片库（免 Key）">Cinemeta · 英文</button>' +
       '</div>' +
       '<button type="button" class="collection-entry" data-lib="wish" aria-pressed="false" ' +
       'aria-label="想看的电影"><span class="collection-text">想看的电影</span>' +
@@ -2563,7 +2563,7 @@
       '<div class="movie-scroll" id="movie-scroll">' +
       '<div class="movie-keypanel" id="movie-keypanel" tabindex="-1" hidden>' +
       '<p class="movie-keytitle" id="movie-key-title">可选：用 TMDB Key 切到中文片库</p>' +
-      '<p class="movie-keytext" id="movie-key-text">不填也能用——当前是免 Key 的英文全量片库。填一个免费的 TMDB ' +
+      '<p class="movie-keytext" id="movie-key-text">不填也能用——当前是 Cinemeta 的英文全量片库（免 Key）。填一个免费的 TMDB ' +
       '<b>API Key (v3 auth)</b> 后，片名、简介、类型都会变成中文，筛选也更精确。' +
       'Key 只存在这台浏览器里，不会写进 MD 文件。</p>' +
       '<div class="movie-keyrow">' +
@@ -2663,10 +2663,10 @@
         if (state.provider === 'tmdb') {
           sourceNote.textContent = 'TMDB 中文库' + tail;
         } else {
-          sourceNote.textContent = '免 Key 英文片库' +
-            (state.hasKey ? ' · 已保存 Key，可切回 TMDB' : ' · 可填 Key 换中文');
+          sourceNote.textContent = 'Cinemeta 英文片库（免 Key）' +
+            (state.hasKey ? ' · 已保存 Key，可切回 TMDB' : '');
         }
-        if (state.error && state.provider !== 'tmdb') {
+        if (state.error) {
           sourceNote.textContent += ' · ' + state.error;
         }
       }
@@ -2685,11 +2685,11 @@
       keyTitle.textContent = state.hasKey ? 'TMDB Key 已保存' : '可选：用 TMDB Key 切到中文片库';
       if (state.hasKey) {
         keyText.innerHTML = '已保存 Key（末尾 <b>' + esc(state.keyTail) + '</b>），当前片源是 <b>' +
-          (state.provider === 'tmdb' ? 'TMDB 中文库' : '免 Key 英文片库') + '</b>。' +
+          (state.provider === 'tmdb' ? 'TMDB 中文库' : 'Cinemeta 英文片库（免 Key）') + '</b>。' +
           '可以在上面的两个按钮之间随时切换；Key 只存在这台浏览器里，不会写进 MD 文件。';
         keyInput.placeholder = '已保存（末尾 ' + state.keyTail + '），粘贴新 Key 可替换';
       } else {
-        keyText.innerHTML = '不填也能用——当前是免 Key 的英文全量片库。填一个免费的 TMDB ' +
+        keyText.innerHTML = '不填也能用——当前是 Cinemeta 的英文全量片库（免 Key）。填一个免费的 TMDB ' +
           '<b>API Key (v3 auth)</b> 后，片名、简介、类型都会变成中文，筛选也更精确。' +
           'Key 只存在这台浏览器里，不会写进 MD 文件。';
         keyInput.placeholder = '粘贴 TMDB API Key（API Key (v3 auth)）';
@@ -2741,7 +2741,7 @@
         if (ok) {
           // TMDB 不通、但免 Key 片库还能用：不要谎称 Key 验证通过。
           keyHint.textContent = 'Key 没通过验证：' + (MovieSource.state().error || '网络异常') +
-            '。已继续使用免 Key 的英文片库，确认复制的是「API Key (v3 auth)」那一串。';
+            '。已继续使用 Cinemeta 英文片库，确认复制的是「API Key (v3 auth)」那一串。';
           feed.online = true;
           resetFeed(1);
           return;
@@ -2762,7 +2762,7 @@
     function switchSource(name) {
       if (name === 'tmdb' && !MovieSource.hasKey()) {
         showKeyPanel(true);
-        keyHint.textContent = 'TMDB 中文片库需要 API Key；也可以先用免 Key 的英文片库。';
+        keyHint.textContent = 'TMDB 中文片库需要 API Key；也可以先用 Cinemeta 英文片库（免 Key）。';
         return false;
       }
       if (!MovieSource.setProvider(name)) return false;
@@ -2788,7 +2788,7 @@
     keyClear.addEventListener('click', function () {
       MovieSource.setKey('');
       resetDiscovery();
-      keyHint.textContent = '已清除 Key，回到免 Key 的英文片库。';
+      keyHint.textContent = '已清除 Key，回到 Cinemeta 英文片库。';
       feed.online = null;
       updateSourceNote();
       renderStatus();
