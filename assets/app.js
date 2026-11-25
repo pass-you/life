@@ -428,172 +428,102 @@
     return state.library[kind];
   }
 
-  // 类型 / 地区用来在「想看的电影」「看过的电影」里做与找电影一致的筛选。
-  // 列表接口不返回这两个字段，收藏时会异步用 TMDB 条目补齐，存进 MD 一起保存。
-  function normalizeTagList(value, limit) {
-    const list = Array.isArray(value) ? value : (typeof value === 'string' ? value.split(/[\/、,]/) : []);
-    const out = [];
-    list.forEach(function (entry) {
-      const text = typeof entry === 'string' ? entry.replace(/\s+/g, ' ').trim() : '';
-      if (text && out.indexOf(text) < 0 && out.length < limit) out.push(text);
+  // 电影行解析 / 生成见 film-record.js。
+
+  // 认片 / 合并 / 唯一化的纯函数集中在 film-identity.js：页面与 node 测试共用一份实现。
+  const {
+    filmTitleKey, filmKeyOf, filmTitleKeys, sameFilm, mergeFilm, uniqueFilms
+  } = window.FilmIdentity;
+  // MD 行格式（解析 / 生成）集中在 film-record.js，导入导出与测试共用同一份实现。
+  const {
+    normalizeTagList, normalizeCollectionItem, parseMovieLine, parseMovieLines, movieRecordLine
+  } = window.FilmRecord;
+
+  // 日页面「找电影」入口的计数：导入 MD 后也要立刻反映去重后的唯一片数。
+  let movieLibraryRefresh = null;
+
+  function refreshMovieEntry() {
+    const entry = app.querySelector('[data-movies-open]');
+    if (!entry) return;
+    const counts = libraryCounts();
+    entry.classList.toggle('has-movies', counts.wish + counts.watched > 0);
+    entry.title = '找电影 · 想看 ' + counts.wish + ' 部 · 看过 ' + counts.watched + ' 部';
+    entry.setAttribute('aria-label', '找电影，想看 ' + counts.wish + ' 部，看过 ' +
+      counts.watched + ' 部');
+  }
+
+  // 收藏里一条是 TMDB 中文条目、一条是 Cinemeta 英文条目时，两条只差
+  // 「TMDB id ↔ IMDb id」的映射。Cinemeta 条目页两个 id 都有，用它把缺的一边补上，
+  // 补完立刻合并——不需要 TMDB Key，也不会再出现「杀死比尔」和「Kill Bill」各算一部。
+  const idBridge = {};
+
+  function collectionEntryByImdb(imdb) {
+    if (!imdb) return null;
+    const lists = collectionList('wish').concat(collectionList('watched'));
+    return lists.filter(function (entry) {
+      return entry && (entry.imdbId === imdb || entry.id === imdb);
+    })[0] || null;
+  }
+
+  function bridgeLibraryIds(size) {
+    const pending = collectionList('wish').concat(collectionList('watched'))
+      .filter(function (entry) {
+        return entry && entry.imdbId && !entry.tmdbId && !idBridge[entry.imdbId];
+      });
+    pending.slice(0, size || 4).forEach(function (entry) {
+      const imdb = entry.imdbId;
+      idBridge[imdb] = true;
+      MovieSource.detail(imdb).then(function (data) {
+        const tmdb = data && /^\d{1,9}$/.test(String(data.tmdbId || ''))
+          ? String(data.tmdbId) : '';
+        if (!tmdb) return;
+        const target = collectionEntryByImdb(imdb);
+        if (!target || target.tmdbId) return;
+        target.tmdbId = tmdb;
+        if (!target.originalTitle && data.originalTitle) {
+          target.originalTitle = data.originalTitle;
+        }
+        dedupeLibrary();
+        markDirty();
+        refreshMovieEntry();
+        if (movieLibraryRefresh) movieLibraryRefresh();
+      }).catch(function () { /* 下次打开再试 */ });
     });
-    return out;
-  }
-
-  function normalizeCollectionItem(item) {
-    const raw = item && typeof item === 'object' ? item : {};
-    const title = typeof raw.title === 'string' ? raw.title.replace(/\s+/g, ' ').trim() : '';
-    const id = typeof raw.id === 'string' ? raw.id.trim() : '';
-    const year = /^\d{4}$/.test(raw.year || '') ? String(raw.year) : '';
-    const rating = Number.isFinite(raw.rating) && raw.rating > 0
-      ? Math.round(raw.rating * 10) / 10
-      : 0;
-    const cover = typeof raw.cover === 'string' && /^https?:\/\//.test(raw.cover) ? raw.cover : '';
-    const added = /^\d{4}-\d{2}-\d{2}$/.test(raw.added || '') ? raw.added : '';
-    // 原名与 IMDb id 不参与展示，只用来把两个片源里的同一部片认成一部。
-    const originalTitle = typeof raw.originalTitle === 'string'
-      ? raw.originalTitle.replace(/\s+/g, ' ').trim()
-      : '';
-    const imdbId = /^tt\d{3,}$/.test(raw.imdbId || '') ? raw.imdbId
-      : (/^tt\d{3,}$/.test(id) ? id : '');
-    // 两个片源对同一部片给的是两套 id。收藏必须同时记住 TMDB 数字 id 与 IMDb id，
-    // 切换片源、重新导入 MD 之后才能在两边都认出「这部片已经收藏过」。
-    const tmdbId = /^\d{1,9}$/.test(raw.tmdbId || '') ? String(raw.tmdbId)
-      : (/^\d{1,9}$/.test(id) ? id : '');
-    return {
-      id: id, title: title, originalTitle: originalTitle, imdbId: imdbId,
-      tmdbId: tmdbId,
-      year: year, rating: rating, cover: cover, added: added,
-      genres: normalizeTagList(raw.genres, 4),
-      regions: normalizeTagList(raw.regions || raw.region, 3)
-    };
-  }
-
-  // 同一部片可能同时出现在 TMDB（数字 id、中文名）和 Cinemeta（IMDb id、英文名）。
-  // 认片顺序：IMDb id → 条目 id → 原名 + 年份（没有原名时退回展示名）。
-  function filmIdOf(item) {
-    if (!item) return '';
-    if (item.imdbId) return String(item.imdbId);
-    const id = String(item.id || '');
-    return /^tt\d{3,}$/.test(id) ? id : '';
-  }
-
-  function filmTitleKey(value) {
-    return String(value || '')
-      .normalize('NFKD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .toLowerCase()
-      .replace(/[^\p{L}\p{N}]+/gu, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-  }
-
-  function filmTitleOf(item) {
-    if (!item) return '';
-    return filmTitleKey(item.originalTitle || item.title);
-  }
-
-  // 跨片源认片用的稳定键：片名（原名优先）+ 年份。
-  // TMDB 给中文名 + 英文原名，Cinemeta 只给英文名，两边按 originalTitle/title
-  // 归一化后是同一条，因此「已经推荐过的片」在两个片源之间共享同一份记录。
-  function filmKeyOf(item) {
-    if (!item) return '';
-    const title = filmTitleOf(item);
-    if (title) return title + '|' + String(item.year || '');
-    const imdb = filmIdOf(item);
-    if (imdb) return imdb;
-    return '';
-  }
-
-  function filmTmdbOf(item) {
-    if (!item) return '';
-    if (/^\d{1,9}$/.test(String(item.tmdbId || ''))) return String(item.tmdbId);
-    const id = String(item.id || '');
-    return /^\d{1,9}$/.test(id) ? id : '';
-  }
-
-  // 同一部片在 TMDB 存中文名、Cinemeta 存英文名，但两边通常都带英文原名。
-  // 认片时把「展示名」和「原名」都当别名，任一对得上且年份不冲突就算同一部。
-  function filmTitleKeys(item) {
-    const keys = [];
-    if (!item) return keys;
-    [item.originalTitle, item.title].forEach(function (value) {
-      const key = filmTitleKey(value);
-      if (key && keys.indexOf(key) < 0) keys.push(key);
-    });
-    return keys;
-  }
-
-  function shareTitleAlias(a, b) {
-    const aKeys = filmTitleKeys(a);
-    const bKeys = filmTitleKeys(b);
-    return aKeys.some(function (key) { return bKeys.indexOf(key) >= 0; });
-  }
-
-  function sameFilm(a, b) {
-    if (!a || !b) return false;
-    const aImdb = filmIdOf(a);
-    const bImdb = filmIdOf(b);
-    // 两边都有 IMDb id 时这是最强证据：不同就是不同的片。
-    if (aImdb && bImdb) return aImdb === bImdb;
-    const aTmdb = filmTmdbOf(a);
-    const bTmdb = filmTmdbOf(b);
-    if (aTmdb && bTmdb && aTmdb === bTmdb) return true;
-    if (a.id && b.id && String(a.id) === String(b.id)) return true;
-    if (!shareTitleAlias(a, b)) return false;
-    const aYear = String(a.year || '');
-    const bYear = String(b.year || '');
-    // 年份都不缺时必须一致；缺年份时只能在标题完全一致的前提下认作同一部。
-    return !aYear || !bYear || aYear === bYear;
-  }
-
-  // 合并同一部片的两条记录：保留更完整的一条，另一条只用来补空缺。
-  function mergeFilm(target, source) {
-    if (!target || !source) return;
-    ['imdbId', 'tmdbId', 'originalTitle'].forEach(function (field) {
-      if (!target[field] && source[field]) target[field] = source[field];
-    });
-    if (!target.year && source.year) target.year = source.year;
-    if (!target.title && source.title) target.title = source.title;
-    if (!target.rating && source.rating) target.rating = source.rating;
-    if (!target.cover && source.cover) target.cover = source.cover;
-    if (!target.id && source.id) target.id = source.id;
-    if (!(target.genres || []).length && (source.genres || []).length) {
-      target.genres = source.genres.slice(0, 4);
-    }
-    if (!(target.regions || []).length && (source.regions || []).length) {
-      target.regions = source.regions.slice(0, 3);
-    }
-    // 收藏日期保留更早的那次。
-    if (source.added && (!target.added || source.added < target.added)) {
-      target.added = source.added;
+    if (pending.length > (size || 4)) {
+      setTimeout(function () { bridgeLibraryIds(size); }, 400);
     }
   }
 
   // 合并「想看」与「看过」里的同一部片：看过优先，重复的记录直接删掉。
   // 打开找电影、导入 MD 后都会跑一次，用户不需要手工清理。
   function dedupeLibrary() {
-    let removed = 0;
-    const watched = collectionList('watched');
-    const wish = collectionList('wish');
-    for (let index = wish.length - 1; index >= 0; index -= 1) {
-      const hit = watched.filter(function (entry) { return sameFilm(entry, wish[index]); })[0];
-      if (!hit) continue;
-      mergeFilm(hit, wish[index]);
-      wish.splice(index, 1);
-      removed += 1;
-    }
-    COLLECTIONS.forEach(function (kind) {
-      const list = collectionList(kind);
-      for (let index = list.length - 1; index >= 0; index -= 1) {
-        const first = list.findIndex(function (entry) { return sameFilm(entry, list[index]); });
-        if (first < 0 || first === index) continue;
-        mergeFilm(list[first], list[index]);
-        list.splice(index, 1);
+    let total = 0;
+    let removed;
+    // 合并会补齐 id，可能让原本认不出的第三条也能认出来；反复跑到不再减少。
+    do {
+      removed = 0;
+      const watched = collectionList('watched');
+      const wish = collectionList('wish');
+      for (let index = wish.length - 1; index >= 0; index -= 1) {
+        const hit = watched.filter(function (entry) { return sameFilm(entry, wish[index]); })[0];
+        if (!hit) continue;
+        mergeFilm(hit, wish[index]);
+        wish.splice(index, 1);
         removed += 1;
       }
-    });
-    return removed;
+      COLLECTIONS.forEach(function (kind) {
+        const list = collectionList(kind);
+        for (let index = list.length - 1; index >= 0; index -= 1) {
+          const first = list.findIndex(function (entry) { return sameFilm(entry, list[index]); });
+          if (first < 0 || first === index) continue;
+          mergeFilm(list[first], list[index]);
+          list.splice(index, 1);
+          removed += 1;
+        }
+      });
+      total += removed;
+    } while (removed > 0);
+    return total;
   }
 
   function findSameFilm(item) {
@@ -643,8 +573,14 @@
     return true;
   }
 
+  // 计数按「同一部片只算一次」：清单里因两个片源留下重名条目时，
+  // 列表和计数都不能把它算两部。看过优先，与 dedupeLibrary 的口径一致。
   function libraryCounts() {
-    return { wish: collectionList('wish').length, watched: collectionList('watched').length };
+    const watched = uniqueFilms(collectionList('watched'));
+    const wish = uniqueFilms(collectionList('wish')).filter(function (item) {
+      return !watched.some(function (kept) { return sameFilm(kept, item); });
+    });
+    return { wish: wish.length, watched: watched.length };
   }
 
   function hasLibraryContent() {
@@ -701,101 +637,7 @@
     return items;
   }
 
-  // MD 里的电影行：- 片名 · 年份 · 评分 · TMDB id · 加入日期 · 海报地址
-  // 尾部可选字段从后往前剥离，标题里带「·」也能原样还原。
-  function parseMovieLine(line, fallbackDate) {
-    const text = String(line || '').replace(/^\s*-\s*/, '').replace(/\s+$/, '');
-    if (!text) return null;
-    let parts = text.split(/\s+·\s+/).map(function (part) { return part.trim(); });
-    // 旧版导出的个别行少了「·」分隔：标题、年份、评分、id 粘在一起
-    // （如「杀死比尔20038.0」「幽灵公主19978.3128」）。不拆开的话
-    // 整行会被当成一个片名，既显示错乱，也无法和另一个片源的同一部片去重。
-    const repaired = [];
-    parts.forEach(function (part) {
-      // 裸 IMDb id、海报地址、日期都是合法字段，不能拿去匹配「标题+年份+评分」，
-      // 否则 tt6019206 会被拆成「tt60 / 1920 / 6」。
-      if (/^tt\d{3,}$/.test(part) || /^https?:\/\//.test(part) ||
-          /^\d{4}-\d{2}-\d{2}$/.test(part) ||
-          /^(类型|地区|原名|imdb|tmdb)=/.test(part)) {
-        repaired.push(part);
-        return;
-      }
-      const glued = /^(.+?)((?:19|20)\d{2})(\d{1,2}(?:\.\d)?)(\d{1,9})?$/.exec(part);
-      const strayId = /^(\d{1,9})\.0$/.exec(part);
-      if (glued && glued[1].trim()) {
-        repaired.push(glued[1].trim(), glued[2], glued[3]);
-        if (glued[4]) repaired.push('tmdb=' + glued[4]);
-        return;
-      }
-      // 「24.0」这种一位小数不是评分（评分不超过 10），是 TMDB id 被误写成小数。
-      if (strayId && Number(strayId[1]) > 10) {
-        repaired.push('tmdb=' + strayId[1]);
-        return;
-      }
-      repaired.push(part);
-    });
-    parts = repaired;
-    const item = { title: '', year: '', rating: 0, id: '', cover: '', added: fallbackDate || '' };
-    // 类型 / 地区 / 原名 / IMDb id 用带标签的段落写在行尾，既能被旧解析器当成普通文本保留，
-    // 也能让清单页做与找电影一致的筛选、跨片源认出同一部片。
-    const tags = { genres: [], regions: [] };
-    for (let index = parts.length - 1; index >= 0; index -= 1) {
-      const tagged = /^(类型|地区|原名|imdb|tmdb)=(.+)$/.exec(parts[index]);
-      if (!tagged) continue;
-      if (tagged[1] === '原名') {
-        item.originalTitle = tagged[2].trim();
-      } else if (tagged[1] === 'tmdb') {
-        if (/^\d{1,9}$/.test(tagged[2].trim())) {
-          item.tmdbId = tagged[2].trim();
-          if (!item.id) item.id = item.tmdbId;
-        }
-      } else if (tagged[1] === 'imdb') {
-        if (/^tt\d{3,}$/.test(tagged[2].trim())) {
-          item.imdbId = tagged[2].trim();
-          if (!item.id) item.id = item.imdbId;
-        }
-      } else {
-        const key = tagged[1] === '类型' ? 'genres' : 'regions';
-        tags[key] = normalizeTagList(tagged[2], 4);
-      }
-      parts.splice(index, 1);
-    }
-    if (parts.length > 1 && /^https?:\/\/\S+$/.test(parts[parts.length - 1])) item.cover = parts.pop();
-    if (parts.length > 1 && /^\d{4}-\d{2}-\d{2}$/.test(parts[parts.length - 1])) item.added = parts.pop();
-    // TMDB 的 id 可能只有 3 位（如《搏击俱乐部》是 550），不能只认 5 位以上；
-    // 但 4 位且落在 1900–2100 的数字是年份，必须留给后面的年份解析。
-    const tail = parts[parts.length - 1] || '';
-    const looksYear = /^(?:19|20|21)\d{2}$/.test(tail);
-    if (parts.length > 1 && (/^tt\d{3,}$/.test(tail) ||
-        (/^\d{3,8}$/.test(tail) && !looksYear))) {
-      item.id = parts.pop();
-    }
-    // 评分只会是 0-10 的一位小数（如 9.2、8），4 位纯数字是年份，不能当评分吃掉。
-    if (parts.length > 1 && /^\d{1,2}(?:\.\d)?$/.test(parts[parts.length - 1])) {
-      item.rating = Number(parts.pop()) || 0;
-    }
-    if (parts.length > 1 && /^\d{4}$/.test(parts[parts.length - 1])) item.year = parts.pop();
-    // 旧版解析曾把 4 位年份写成评分（如 2026.0），读回时还原成年份。
-    if (!item.year && item.rating >= 1900 && item.rating <= 2100) {
-      item.year = String(Math.round(item.rating));
-      item.rating = 0;
-    }
-    item.title = parts.join(' · ').trim();
-    if (!item.title) return null;
-    item.genres = tags.genres;
-    item.regions = tags.regions;
-    return normalizeCollectionItem(item);
-  }
-
-  function parseMovieLines(value) {
-    const items = [];
-    String(value || '').split('\n').forEach(function (line) {
-      if (!/^\s*-/.test(line)) return;
-      const item = parseMovieLine(line, '');
-      if (item) items.push(item);
-    });
-    return items;
-  }
+  // 电影行解析见 film-record.js（与 node 测试共用）。
 
   // 旧版「今日电影 / 今日片单」章节迁移到「看过的电影」。
   function migrateDayMovies(list, date) {
@@ -2697,6 +2539,11 @@
           target.imdbId = data.imdbId;
           changed = true;
         }
+        // Cinemeta 条目页同时给出 TMDB 数字 id，直接补齐就能和中文条目认成同一部。
+        if (!target.tmdbId && /^\d{1,9}$/.test(String(data.tmdbId || ''))) {
+          target.tmdbId = String(data.tmdbId);
+          changed = true;
+        }
         if (!(target.genres || []).length && data.genres && data.genres.length) {
           target.genres = normalizeTagList(data.genres, 4);
           changed = true;
@@ -2714,13 +2561,16 @@
             if (!current || current.tmdbId) return;
             current.tmdbId = String(hit.id);
             if (!current.originalTitle && hit.originalTitle) current.originalTitle = hit.originalTitle;
+            if (dedupeLibrary()) renderLibraryButtons();
             markDirty();
             if (libraryKind) renderLibraryView();
             refreshEntry();
           }).catch(function () { /* 下次再补 */ });
         }
         if (!changed) return;
+        if (dedupeLibrary()) renderLibraryButtons();
         markDirty();
+        refreshEntry();
         if (libraryKind) renderLibraryView();
       }).catch(function () { enriching[id] = false; });
     }
@@ -2782,6 +2632,11 @@
           }).catch(function () { /* 下次打开再试 */ });
         });
     }
+
+    // 收藏里一条是 TMDB 中文条目、一条是 Cinemeta 英文条目时，两条只差
+    // 「TMDB id ↔ IMDb id」的映射。Cinemeta 条目页两个 id 都有，用它把缺的一边补上，
+    // 补完立刻合并——不需要 TMDB Key，也不会再出现「杀死比尔」和「Kill Bill」各算一部。
+    // ID 桥接与入口计数刷新在外层：导入 MD 时也能用到。
 
     // 用片名 + 年份把旧收藏里的豆瓣条目换成当前片源可用的条目，
     // 保留用户自己写的片名与收藏日期。
@@ -3430,6 +3285,12 @@
 
     function renderLibraryView() {
       if (!libraryKind) return;
+      // 异步补全身份后，原本认不出的两条可能已经能认成同一部；渲染前再合并一次。
+      if (dedupeLibrary()) {
+        markDirty();
+        renderLibraryButtons();
+        refreshEntry();
+      }
       const all = collectionList(libraryKind).slice();
       const isWish = libraryKind === 'wish';
       const name = isWish ? '想看的电影' : '看过的电影';
@@ -3784,15 +3645,14 @@
       loadMore();
     }
 
-    function refreshEntry() {
-      const entry = app.querySelector('[data-movies-open]');
-      if (!entry) return;
-      const counts = libraryCounts();
-      entry.classList.toggle('has-movies', counts.wish + counts.watched > 0);
-      entry.title = '找电影 · 想看 ' + counts.wish + ' 部 · 看过 ' + counts.watched + ' 部';
-      entry.setAttribute('aria-label', '找电影，想看 ' + counts.wish + ' 部，看过 ' +
-        counts.watched + ' 部');
-    }
+    const refreshEntry = refreshMovieEntry;
+
+    // 清单/弹层内的刷新钩子：ID 桥接在外层完成时回调这里。
+    movieLibraryRefresh = function () {
+      renderLibraryButtons();
+      if (libraryKind) renderLibraryView();
+      refreshEntry();
+    };
 
     let observer = null;
 
@@ -3803,6 +3663,7 @@
       document.body.classList.remove('modal-open');
       document.removeEventListener('keydown', onKey);
       window.removeEventListener('hashchange', close);
+      movieLibraryRefresh = null;
       refreshEntry();
       const entry = app.querySelector('[data-movies-open]');
       if (entry) entry.focus();
@@ -3914,6 +3775,7 @@
         refreshEntry();
         if (added) enrichLibraryItem(id);
         if (added) completeMissingImdb(2);
+        if (added) bridgeLibraryIds(2);
         if (added && !libraryKind && !filters.query.trim()) {
           // 刚标记「想看」/「看过」的电影不再留在推荐流里。
           const card = mark.closest('.movie-card');
@@ -4014,6 +3876,7 @@
         repairLibrary(4);
         upgradeLibraryIdentity(4);
         completeMissingImdb(6);
+        bridgeLibraryIds(6);
       } else {
         renderStatus();
         showKeyPanel(true);
@@ -4073,32 +3936,7 @@
     parts.push(heading, '', escapeMdText(value), '');
   }
 
-  function movieRecordLine(item) {
-    const title = String(item.title || '').replace(/\s*·\s*/g, ' ').replace(/\s+/g, ' ').trim();
-    const bits = [title];
-    if (item.year) bits.push(item.year);
-    if (item.rating) bits.push(item.rating.toFixed(1));
-    // IMDb id 自带 tt 前缀不会认错；TMDB 纯数字 id 加 tmdb= 前缀，
-    // 免得 4 位 id（如 2024）回读时被当成上映年份。
-    if (item.id) bits.push(/^tt\d{3,}$/.test(item.id) ? item.id : 'tmdb=' + item.id);
-    // 两条 id 都要落盘：TMDB 数字 id 与 IMDb id 互相补位，
-    // 切到另一个片源后仍能认出同一部片，不会被当成新片再推一遍。
-    const tmdbId = filmTmdbOf(item);
-    const imdbId = filmIdOf(item);
-    if (tmdbId && tmdbId !== item.id) bits.push('tmdb=' + tmdbId);
-    if (imdbId && imdbId !== item.id) bits.push('imdb=' + imdbId);
-    if (item.added) bits.push(item.added);
-    if (item.cover) bits.push(item.cover);
-    if (item.genres && item.genres.length) bits.push('类型=' + item.genres.join('/'));
-    if (item.regions && item.regions.length) bits.push('地区=' + item.regions.join('/'));
-    // 原名与 IMDb id 只在和展示字段不同时写入：它们负责在 TMDB / Cinemeta
-    // 两套 id 之间认出同一部片，导回后仍能去重、不再被推荐。
-    if (item.originalTitle && filmTitleKey(item.originalTitle) !== filmTitleKey(title)) {
-      bits.push('原名=' + item.originalTitle);
-    }
-    if (item.imdbId && item.imdbId !== item.id) bits.push('imdb=' + item.imdbId);
-    return '- ' + bits.join(' · ');
-  }
+  // 电影行生成见 film-record.js。
 
   function buildMarkdown() {
     const parts = [
@@ -4482,6 +4320,10 @@
       noticeIsError = false;
       currentKey = '';
       render();
+      // 导入后立刻按唯一片数刷新入口计数；缺 TMDB id 的 IMDb 条目在后台桥接，
+      // 补完会自动合并并再次刷新，不必等用户打开找电影。
+      refreshMovieEntry();
+      bridgeLibraryIds(4);
       const stats = countData();
       setNotice('已导入 ' + file.name + ' · 未连接文件' +
         (supportsFsa ? '，点「选择保存位置」选中该文件即可自动同步' : '，修改需导出') +

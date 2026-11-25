@@ -536,6 +536,8 @@ window.MovieSource = (function () {
           directors: Array.isArray(raw.director) ? raw.director.slice(0, 3) : [],
           cast: Array.isArray(raw.cast) ? raw.cast.slice(0, 6) : [],
           imdbId: String(raw.imdb_id || ''),
+          // Cinemeta 同时带 TMDB 数字 id：这是把英文条目和中文条目认成同一部片的桥。
+          tmdbId: /^\d{1,9}$/.test(String(raw.moviedb_id || '')) ? String(raw.moviedb_id) : '',
           external: IMDB + encodeURIComponent(raw.imdb_id || id) + '/'
         };
       });
