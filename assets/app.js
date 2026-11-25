@@ -712,6 +712,14 @@
     // 整行会被当成一个片名，既显示错乱，也无法和另一个片源的同一部片去重。
     const repaired = [];
     parts.forEach(function (part) {
+      // 裸 IMDb id、海报地址、日期都是合法字段，不能拿去匹配「标题+年份+评分」，
+      // 否则 tt6019206 会被拆成「tt60 / 1920 / 6」。
+      if (/^tt\d{3,}$/.test(part) || /^https?:\/\//.test(part) ||
+          /^\d{4}-\d{2}-\d{2}$/.test(part) ||
+          /^(类型|地区|原名|imdb|tmdb)=/.test(part)) {
+        repaired.push(part);
+        return;
+      }
       const glued = /^(.+?)((?:19|20)\d{2})(\d{1,2}(?:\.\d)?)(\d{1,9})?$/.exec(part);
       const strayId = /^(\d{1,9})\.0$/.exec(part);
       if (glued && glued[1].trim()) {
