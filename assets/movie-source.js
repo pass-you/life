@@ -1,182 +1,202 @@
-/* 电影片库客户端：由本地 serve.py 代理豆瓣的列表、详情、海报与条目页。
- * 页面由 serve.py 托管时走同源 api/movie/；用 file:// 或别的本地端口打开时，
- * 自动回退到本机 127.0.0.1:8765，只要服务在跑，找电影就能直接用。 */
+/* 电影片库：站点自带的静态数据（assets/library/movies.json + assets/library/p/*.webp）。
+ * 不走任何本地服务：GitHub Pages、file://、本机静态服务器打开都立即可用，无需启动进程。
+ * 数据由 tools/build_library.py 从豆瓣抓取生成，覆盖全部类型 / 地区 / 年代。 */
 window.MovieSource = (function () {
   'use strict';
 
-  const RELATIVE = 'api/movie/';
-  const LOCAL_BASES = ['http://127.0.0.1:8765/api/movie/', 'http://localhost:8765/api/movie/'];
-  let activeBase = null;
-  let probe = null;
+  const LIBRARY_URL = 'assets/library/movies.json';
+  const PAGE_SIZE = 24;
 
-  function absolute(base) {
-    try {
-      return new URL(base, document.baseURI).toString();
-    } catch (error) {
-      return base;
-    }
+  let library = null;
+  let loading = null;
+  let error = '';
+
+  function normalize(movie) {
+    return {
+      id: String(movie.id || ''),
+      title: movie.title || '',
+      year: String(movie.year || ''),
+      rating: Number(movie.rating) || 0,
+      genres: Array.isArray(movie.genres) ? movie.genres : [],
+      region: movie.region || '',
+      duration: movie.duration || '',
+      directors: Array.isArray(movie.directors) ? movie.directors : [],
+      casts: Array.isArray(movie.casts) ? movie.casts : [],
+      summary: movie.summary || '',
+      summaryBy: movie.summaryBy || '',
+      poster: movie.poster || '',
+      tags: Array.isArray(movie.tags) ? movie.tags : []
+    };
   }
 
-  function candidates() {
-    const list = [absolute(RELATIVE)];
-    LOCAL_BASES.forEach(function (base) {
-      if (list.indexOf(base) < 0) list.push(base);
-    });
-    return list;
-  }
-
-  function base() {
-    return activeBase || absolute(RELATIVE);
-  }
-
-  function probeBase(candidate) {
-    return fetch(candidate + 'health', {
-      headers: { Accept: 'application/json' },
-      cache: 'no-store',
-      mode: 'cors'
-    }).then(function (response) {
-      if (!response.ok) throw new Error('HTTP ' + response.status);
-      return response.json();
-    }).then(function (data) {
-      if (!data || data.source !== 'douban') throw new Error('不是电影服务');
-      return candidate;
-    });
-  }
-
-  function online() {
-    if (probe) return probe;
-    probe = candidates().reduce(function (chain, candidate) {
-      return chain.catch(function () { return probeBase(candidate); });
-    }, Promise.reject(new Error('尚未探测'))).then(function (hit) {
-      activeBase = hit;
-      return true;
-    }).catch(function () {
-      activeBase = null;
-      probe = null;
-      return false;
-    });
-    return probe;
-  }
-
-  function retry() {
-    activeBase = null;
-    probe = null;
-    memo.clear();
-    return online();
-  }
-
-  function getJSON(path) {
-    return online().then(function (ok) {
-      if (!ok) throw new Error('本地服务未启动');
-      return fetch(base() + path, {
-        headers: { Accept: 'application/json' },
-        cache: 'no-store',
-        mode: 'cors'
+  function load() {
+    if (library) return Promise.resolve(library);
+    if (loading) return loading;
+    error = '';
+    loading = fetch(LIBRARY_URL, { headers: { Accept: 'application/json' } })
+      .then(function (response) {
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        return response.json();
+      })
+      .then(function (data) {
+        const rows = (data && data.movies) || [];
+        library = rows.map(normalize).filter(function (movie) { return movie.id && movie.title; });
+        return library;
+      })
+      .catch(function (err) {
+        loading = null;
+        error = '片库加载失败：' + (err && err.message ? err.message : '网络异常');
+        throw err;
       });
-    }).then(function (response) {
-      if (!response.ok) throw new Error('HTTP ' + response.status);
-      return response.json();
-    }).then(function (data) {
-      if (data && data.error) throw new Error(data.error);
-      return data;
+    return loading;
+  }
+
+  // 片库只认标签：类型 / 地区 / 年代都是抓取时打在片子上的 tag，聚合值（华语、欧美）也能命中。
+  function hasTag(movie, tag) {
+    return !!tag && tag !== '全部' && movie.tags.indexOf(tag) >= 0;
+  }
+
+  function decadeOf(year, decades) {
+    const value = Number(year);
+    if (!value) return '';
+    for (let i = 0; i < decades.length; i += 1) {
+      const item = decades[i];
+      if (item.from && value >= item.from && value <= item.to) return item.label;
+    }
+    return '';
+  }
+
+  function keywordHit(movie, keyword) {
+    if (!keyword) return true;
+    const needle = keyword.toLowerCase();
+    const fields = [movie.title, movie.year, movie.region, movie.duration,
+      movie.genres.join(' '), movie.directors.join(' '), movie.casts.join(' '), movie.tags.join(' ')];
+    for (let i = 0; i < fields.length; i += 1) {
+      if (String(fields[i] || '').toLowerCase().indexOf(needle) >= 0) return true;
+    }
+    return false;
+  }
+
+  function compare(sort) {
+    if (sort === 'T') {
+      return function (a, b) {
+        return (Number(b.year) || 0) - (Number(a.year) || 0) || b.rating - a.rating;
+      };
+    }
+    return function (a, b) {
+      return b.rating - a.rating || (Number(b.year) || 0) - (Number(a.year) || 0);
+    };
+  }
+
+  function matchRows(rows, cond, keyword) {
+    return rows.filter(function (movie) {
+      if (cond.genre && cond.genre !== '全部' && !hasTag(movie, cond.genre)) return false;
+      if (cond.region && cond.region !== '全部' && !hasTag(movie, cond.region)) return false;
+      if (cond.decade && cond.decade !== '全部' && !hasTag(movie, cond.decade)) return false;
+      return keywordHit(movie, keyword);
     });
   }
 
-  function paramsOf(options) {
-    const params = new URLSearchParams();
-    params.set('start', String(options.start || 0));
-    return params;
-  }
-
-  // 列表/搜索响应在内存里留 5 分钟：打开页面时预热的那一页，点「找电影」立刻就能渲染，
-  // 不用等豆瓣往返。过期后重新请求，失败的条目立刻丢掉，不会缓存错误。
-  const MEMO_TTL = 5 * 60 * 1000;
-  const memo = new Map();
-
-  function memoJSON(path) {
-    const hit = memo.get(path);
-    if (hit && Date.now() - hit.at < MEMO_TTL) return hit.promise;
-    const promise = getJSON(path);
-    memo.set(path, { at: Date.now(), promise: promise });
-    promise.catch(function () { memo.delete(path); });
-    return promise;
+  /* options: { genre, region, decade, sort, query, start } */
+  function query(options) {
+    const opts = options || {};
+    return load().then(function (rows) {
+      const keyword = String(opts.query || '').trim();
+      const base = { genre: opts.genre, region: opts.region, decade: opts.decade };
+      // 静态片库里三维交集可能为空；搜索保持精确，筛选按「年代 → 地区」逐级放宽，
+      // 并把放宽的维度返回给界面明确提示，避免出现空白页。
+      const attempts = keyword ? [base] : [
+        base,
+        { genre: base.genre, region: base.region, decade: '全部' },
+        { genre: base.genre, region: '全部', decade: '全部' }
+      ];
+      let hits = [];
+      let relaxed = '';
+      for (let i = 0; i < attempts.length; i += 1) {
+        hits = matchRows(rows, attempts[i], keyword);
+        if (hits.length) {
+          if (i === 1) relaxed = '年代';
+          else if (i === 2) relaxed = '地区';
+          break;
+        }
+      }
+      hits.sort(compare(opts.sort));
+      const start = Math.max(0, Number(opts.start) || 0);
+      const page = hits.slice(start, start + PAGE_SIZE);
+      return {
+        items: page,
+        total: hits.length,
+        relaxed: relaxed,
+        hasMore: start + page.length < hits.length
+      };
+    });
   }
 
   function discover(options) {
-    const params = paramsOf(options);
-    if (options.sort) params.set('sort', options.sort);
-    if (options.genres) params.set('genres', options.genres);
-    if (options.countries) params.set('countries', options.countries);
-    if (options.from) params.set('from', String(options.from));
-    if (options.to) params.set('to', String(options.to));
-    return memoJSON('discover?' + params.toString());
+    return query(options);
   }
 
   function search(options) {
-    const params = paramsOf(options);
-    params.set('q', options.q || '');
-    if (options.sort) params.set('sort', options.sort);
-    if (options.genres) params.set('genres', options.genres);
-    if (options.countries) params.set('countries', options.countries);
-    if (options.from) params.set('from', String(options.from));
-    if (options.to) params.set('to', String(options.to));
-    return memoJSON('search?' + params.toString());
+    return query(options);
   }
 
-  function detail(id) {
-    return getJSON('detail?id=' + encodeURIComponent(id));
-  }
-
-  function poster(url) {
-    if (!url) return '';
-    if (/^data:|^blob:|^assets\//.test(url)) return url;
-    return base() + 'poster?u=' + encodeURIComponent(url);
-  }
-
-  function pageUrl(id) {
-    return base() + 'page?id=' + encodeURIComponent(id);
-  }
-
-  // 悬停时先把条目页 HTML 灌进浏览器缓存，点击后 iframe 直接命中，不再等豆瓣。
-  const preloaded = {};
-  function preload(id) {
-    if (!id || preloaded[id]) return;
-    preloaded[id] = true;
-    online().then(function (ok) {
-      if (!ok) return;
-      fetch(pageUrl(id), { cache: 'force-cache' }).catch(function () {});
+  function find(id) {
+    return load().then(function (rows) {
+      for (let i = 0; i < rows.length; i += 1) {
+        if (rows[i].id === id) return rows[i];
+      }
+      return null;
     });
   }
 
-  // 页面打开时先在后台探测服务并预取「找电影」的首屏（综合排序第一页），
-  // 用户点胶片按钮时列表已经在内存里，弹层立即出内容。
+  function detail(id) {
+    return find(id);
+  }
+
+  // 海报存在仓库里，直接给相对路径；没有海报的片子由 UI 用片名兜底。
+  function poster(movie) {
+    if (!movie) return '';
+    if (movie.poster) {
+      return movie.poster.indexOf('/') >= 0 ? movie.poster : 'assets/library/p/' + movie.poster;
+    }
+    return '';
+  }
+
+  function online() {
+    return load().then(function () { return true; }).catch(function () { return false; });
+  }
+
+  function retry() {
+    library = null;
+    loading = null;
+    return online();
+  }
+
+  // 打开日页面时预热一次片库，点胶片按钮时列表已经在内存里。
   let warmed = false;
   function warm() {
-    if (warmed) return Promise.resolve(false);
+    if (warmed) return Promise.resolve(true);
     warmed = true;
-    return online().then(function (ok) {
-      if (!ok) {
-        warmed = false;
-        return false;
-      }
-      return discover({ start: 0, sort: 'U', genres: '全部', countries: '全部' })
-        .then(function () { return true; })
-        .catch(function () { return false; });
-    }).catch(function () {
+    return load().then(function () { return true; }).catch(function () {
       warmed = false;
       return false;
     });
   }
 
+  function lastError() {
+    return error;
+  }
+
   return {
+    load: load,
     online: online,
     retry: retry,
     warm: warm,
     discover: discover,
     search: search,
     detail: detail,
+    find: find,
     poster: poster,
-    pageUrl: pageUrl,
-    preload: preload
+    lastError: lastError
   };
 })();
