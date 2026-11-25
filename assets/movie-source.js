@@ -258,6 +258,9 @@ window.MovieSource = (function () {
     return {
       id: String(raw.id),
       title: raw.title || raw.name || raw.original_title || '',
+      // 原名（多数是英文）用来跨片源认人：TMDB 中文名和 Cinemeta 英文名对不上，
+      // 但 original_title / name 指向同一部片。
+      originalTitle: raw.original_title || raw.title || raw.name || '',
       year: yearOf(raw.release_date),
       rating: rate(raw.vote_average),
       votes: Number(raw.vote_count) || 0,
@@ -427,6 +430,7 @@ window.MovieSource = (function () {
     return {
       id: String(id),
       title: raw.name || '',
+      originalTitle: raw.name || '',
       year: cineYear(raw),
       rating: rate(raw.imdbRating),
       votes: 0,
@@ -515,10 +519,10 @@ window.MovieSource = (function () {
           provider: 'cinemeta',
           id: String(raw.imdb_id || raw.id || id),
           title: raw.name || '',
-          originalTitle: '',
+          originalTitle: raw.name || '',
           year: cineYear(raw),
           rating: rate(raw.imdbRating),
-          votes: Number(raw.imdbVotes) || 0,
+          votes: Number(String(raw.imdbVotes || '').replace(/[^\d]/g, '')) || 0,
           cover: raw.poster || '',
           backdrop: raw.background || '',
           overview: typeof raw.description === 'string' ? raw.description.trim() : '',

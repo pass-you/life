@@ -57,8 +57,9 @@
       'Hong Kong', 'Taiwan'],
     '欧美': ['美国', '英国', '法国', '德国', '意大利', '西班牙', '加拿大', '澳大利亚',
       '爱尔兰', '瑞典', '丹麦', '荷兰', '俄罗斯', '波兰', '奥地利', '比利时',
-      'United States of America', 'United Kingdom', 'France', 'Germany', 'Italy', 'Spain',
-      'Canada', 'Australia', 'Ireland', 'Sweden', 'Denmark', 'Netherlands', 'Russia']
+      'United States of America', 'United States', 'USA', 'United Kingdom', 'UK', 'England',
+      'France', 'Germany', 'Italy', 'Spain', 'Canada', 'Australia', 'Ireland', 'Sweden',
+      'Denmark', 'Netherlands', 'Russia']
   };
 
   const WEATHERS = [
@@ -449,11 +450,76 @@
       : 0;
     const cover = typeof raw.cover === 'string' && /^https?:\/\//.test(raw.cover) ? raw.cover : '';
     const added = /^\d{4}-\d{2}-\d{2}$/.test(raw.added || '') ? raw.added : '';
+    // 原名与 IMDb id 不参与展示，只用来把两个片源里的同一部片认成一部。
+    const originalTitle = typeof raw.originalTitle === 'string'
+      ? raw.originalTitle.replace(/\s+/g, ' ').trim()
+      : '';
+    const imdbId = /^tt\d{3,}$/.test(raw.imdbId || '') ? raw.imdbId
+      : (/^tt\d{3,}$/.test(id) ? id : '');
     return {
-      id: id, title: title, year: year, rating: rating, cover: cover, added: added,
+      id: id, title: title, originalTitle: originalTitle, imdbId: imdbId,
+      year: year, rating: rating, cover: cover, added: added,
       genres: normalizeTagList(raw.genres, 4),
       regions: normalizeTagList(raw.regions || raw.region, 3)
     };
+  }
+
+  // 同一部片可能同时出现在 TMDB（数字 id、中文名）和 Cinemeta（IMDb id、英文名）。
+  // 认片顺序：IMDb id → 条目 id → 原名 + 年份（没有原名时退回展示名）。
+  function filmIdOf(item) {
+    if (!item) return '';
+    if (item.imdbId) return String(item.imdbId);
+    const id = String(item.id || '');
+    return /^tt\d{3,}$/.test(id) ? id : '';
+  }
+
+  function filmTitleKey(value) {
+    return String(value || '')
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}]+/gu, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function filmTitleOf(item) {
+    if (!item) return '';
+    return filmTitleKey(item.originalTitle || item.title);
+  }
+
+  function sameFilm(a, b) {
+    if (!a || !b) return false;
+    const aImdb = filmIdOf(a);
+    const bImdb = filmIdOf(b);
+    if (aImdb && bImdb) return aImdb === bImdb;
+    if (a.id && b.id && String(a.id) === String(b.id)) return true;
+    const aTitle = filmTitleOf(a);
+    const bTitle = filmTitleOf(b);
+    if (!aTitle || aTitle !== bTitle) return false;
+    const aYear = String(a.year || '');
+    const bYear = String(b.year || '');
+    // 年份都不缺时必须一致；缺年份时只能在标题完全一致的前提下认作同一部。
+    return !aYear || !bYear || aYear === bYear;
+  }
+
+  function findSameFilm(item) {
+    const lists = COLLECTIONS.map(collectionList);
+    for (let index = 0; index < lists.length; index += 1) {
+      const found = lists[index].filter(function (entry) { return sameFilm(entry, item); })[0];
+      if (found) return found;
+    }
+    return null;
+  }
+
+  // 取消收藏、换清单或去重时，把两个片源里的同一部片一起清掉，避免残留数字 id 的副本。
+  function removeFilm(item) {
+    COLLECTIONS.forEach(function (kind) {
+      const list = collectionList(kind);
+      for (let index = list.length - 1; index >= 0; index -= 1) {
+        if (sameFilm(list[index], item)) list.splice(index, 1);
+      }
+    });
   }
 
   function findInCollection(kind, id) {
@@ -471,10 +537,14 @@
   function addToCollection(kind, item) {
     const next = normalizeCollectionItem(item);
     if (!next.title) return false;
+    const previous = findSameFilm(next);
+    if (previous) {
+      if (previous.added && !next.added) next.added = previous.added;
+      if (!next.originalTitle && previous.originalTitle) next.originalTitle = previous.originalTitle;
+      if (!next.imdbId && previous.imdbId) next.imdbId = previous.imdbId;
+    }
+    removeFilm(next);
     if (!next.added) next.added = dayStamp();
-    const other = kind === 'wish' ? 'watched' : 'wish';
-    removeFromCollection(kind, next.id);
-    removeFromCollection(other, next.id);
     collectionList(kind).push(next);
     return true;
   }
@@ -544,19 +614,34 @@
     if (!text) return null;
     const parts = text.split(/\s+·\s+/).map(function (part) { return part.trim(); });
     const item = { title: '', year: '', rating: 0, id: '', cover: '', added: fallbackDate || '' };
-    // 类型 / 地区用带标签的段落写在行尾，既能被旧解析器当成普通文本保留，
-    // 也能让清单页做与找电影一致的筛选。
+    // 类型 / 地区 / 原名 / IMDb id 用带标签的段落写在行尾，既能被旧解析器当成普通文本保留，
+    // 也能让清单页做与找电影一致的筛选、跨片源认出同一部片。
     const tags = { genres: [], regions: [] };
     for (let index = parts.length - 1; index >= 0; index -= 1) {
-      const tagged = /^(类型|地区)=(.+)$/.exec(parts[index]);
+      const tagged = /^(类型|地区|原名|imdb|tmdb)=(.+)$/.exec(parts[index]);
       if (!tagged) continue;
-      const key = tagged[1] === '类型' ? 'genres' : 'regions';
-      tags[key] = normalizeTagList(tagged[2], 4);
+      if (tagged[1] === '原名') {
+        item.originalTitle = tagged[2].trim();
+      } else if (tagged[1] === 'imdb') {
+        if (/^tt\d{3,}$/.test(tagged[2].trim())) item.imdbId = tagged[2].trim();
+      } else if (tagged[1] === 'tmdb') {
+        if (/^\d{1,9}$/.test(tagged[2].trim())) item.id = tagged[2].trim();
+      } else {
+        const key = tagged[1] === '类型' ? 'genres' : 'regions';
+        tags[key] = normalizeTagList(tagged[2], 4);
+      }
       parts.splice(index, 1);
     }
     if (parts.length > 1 && /^https?:\/\/\S+$/.test(parts[parts.length - 1])) item.cover = parts.pop();
     if (parts.length > 1 && /^\d{4}-\d{2}-\d{2}$/.test(parts[parts.length - 1])) item.added = parts.pop();
-    if (parts.length > 1 && /^(?:tt\d{3,}|\d{5,})$/.test(parts[parts.length - 1])) item.id = parts.pop();
+    // TMDB 的 id 可能只有 3 位（如《搏击俱乐部》是 550），不能只认 5 位以上；
+    // 但 4 位且落在 1900–2100 的数字是年份，必须留给后面的年份解析。
+    const tail = parts[parts.length - 1] || '';
+    const looksYear = /^(?:19|20|21)\d{2}$/.test(tail);
+    if (parts.length > 1 && (/^tt\d{3,}$/.test(tail) ||
+        (/^\d{3,8}$/.test(tail) && !looksYear))) {
+      item.id = parts.pop();
+    }
     // 评分只会是 0-10 的一位小数（如 9.2、8），4 位纯数字是年份，不能当评分吃掉。
     if (parts.length > 1 && /^\d{1,2}(?:\.\d)?$/.test(parts[parts.length - 1])) {
       item.rating = Number(parts.pop()) || 0;
@@ -589,13 +674,9 @@
     (list || []).forEach(function (item) {
       if (!item || !item.title) return;
       if (!item.added) item.added = date;
-      const exists = collectionList('watched').some(function (entry) {
-        if (item.id) return entry.id === item.id;
-        return !entry.id && entry.title === item.title;
-      });
-      if (exists) return;
-      if (item.id && findInCollection('wish', item.id)) removeFromCollection('wish', item.id);
-      collectionList('watched').push(normalizeCollectionItem(item));
+      // 已经在「看过」里就不动；只在「想看」里则按同一部片移过来。
+      if (collectionList('watched').some(function (entry) { return sameFilm(entry, item); })) return;
+      addToCollection('watched', item);
     });
   }
 
@@ -2289,9 +2370,12 @@
     };
 
     // 想看 / 看过都算「已收藏」，推荐流不再推它们，但搜索和收藏列表不受影响。
-    function savedIds() {
+    // 判定按「同一部片」而不是条目 id：TMDB 与 Cinemeta 对同一部片给的是两套 id，
+    // 只比 id 会让在 TMDB 收藏过的片又从 Cinemeta 推荐出来。
+    function isSaved(movie) {
+      if (!movie) return false;
       return collectionList('wish').concat(collectionList('watched'))
-        .map(function (item) { return item.id; }).filter(Boolean);
+        .some(function (entry) { return sameFilm(entry, movie); });
     }
 
     // 旧版豆瓣片源存下来的海报（doubanio）现在会被对方站点按外链 403，
@@ -2309,21 +2393,24 @@
       return [item.title, item.year, item.cover].join('|');
     }
 
-    function isIn(kind, id) {
-      return !!findInCollection(kind, id);
+    function isIn(kind, movie) {
+      if (!movie || (!movie.id && !movie.title)) return false;
+      return collectionList(kind).some(function (entry) { return sameFilm(entry, movie); });
     }
 
     // 想看 / 看过 互斥切换：再点一次同一状态即取消收藏。
+    // 同一部片在另一个片源里已有记录时，直接沿用那条记录的身份字段，不再存第二份。
     function toggleCollection(kind, movie) {
-      const id = movie && movie.id;
-      if (!id) return false;
-      if (isIn(kind, id)) {
-        removeFromCollection(kind, id);
+      if (!movie || !movie.id) return false;
+      if (isIn(kind, movie)) {
+        removeFilm(movie);
         return false;
       }
       addToCollection(kind, {
-        id: id,
+        id: movie.id,
         title: movie.title || '',
+        originalTitle: movie.originalTitle || '',
+        imdbId: movie.imdbId || '',
         year: movie.year || '',
         rating: movie.rating || 0,
         cover: movie.cover || '',
@@ -2366,24 +2453,34 @@
       return keyword ? MovieSource.search(payload) : MovieSource.discover(payload);
     }
 
-    function markButton(kind, id, label) {
-      const on = isIn(kind, id);
+    function markButton(kind, movie, label) {
+      const on = isIn(kind, movie);
+      const id = movie && movie.id ? movie.id : '';
       return '<button type="button" class="movie-mark' + (on ? ' is-on' : '') +
-        '" data-mark="' + kind + '" data-id="' + esc(id) + '" aria-pressed="' + on + '">' +
+        '" data-mark="' + kind + '" data-id="' + esc(id) +
+        '" data-title="' + esc(movie && movie.title || '') +
+        '" data-original="' + esc(movie && movie.originalTitle || '') +
+        '" data-year="' + esc(movie && movie.year || '') +
+        '" aria-pressed="' + on + '">' +
         (on ? '✓' : '＋') + ' ' + label + '</button>';
     }
 
-    // 列表接口没有地区，收藏后用 TMDB 条目补齐，清单里才能按地区筛选、排序。
+    // 列表接口没有地区、原名和 IMDb id，收藏后用条目页补齐：
+    // 清单筛选要地区，跨片源认同一部片要原名 / IMDb id。
     const enriching = {};
     function needsEnrich(item) {
       if (!item) return false;
       return !item.year || !item.rating || !(item.genres || []).length || !(item.regions || []).length;
     }
 
+    function needsIdentity(item) {
+      return !item || !item.originalTitle || !item.imdbId;
+    }
+
     function enrichLibraryItem(id) {
       if (feed.online !== true || !id || enriching[id]) return;
       const item = findInCollection('wish', id) || findInCollection('watched', id);
-      if (!needsEnrich(item)) return;
+      if (!needsEnrich(item) && !needsIdentity(item)) return;
       enriching[id] = true;
       MovieSource.detail(id).then(function (data) {
         enriching[id] = false;
@@ -2394,6 +2491,14 @@
         if (!target.year && data.year) { target.year = data.year; changed = true; }
         if (!target.rating && data.rating) { target.rating = data.rating; changed = true; }
         if (!target.title && data.title) { target.title = data.title; changed = true; }
+        if (!target.originalTitle && data.originalTitle) {
+          target.originalTitle = data.originalTitle;
+          changed = true;
+        }
+        if (!target.imdbId && /^tt\d{3,}$/.test(data.imdbId || '')) {
+          target.imdbId = data.imdbId;
+          changed = true;
+        }
         if (!(target.genres || []).length && data.genres && data.genres.length) {
           target.genres = normalizeTagList(data.genres, 4);
           changed = true;
@@ -2412,8 +2517,24 @@
     function enrichLibraryList() {
       if (!libraryKind) return;
       collectionList(libraryKind).slice(0, 8).forEach(function (entry) {
-        if (needsEnrich(entry)) enrichLibraryItem(entry.id);
+        if (needsEnrich(entry) || needsIdentity(entry)) enrichLibraryItem(entry.id);
       });
+    }
+
+    // 旧版收藏没存原名 / IMDb id，换片源后认不出是同一部片。
+    // 打开找电影时按批补一次，补齐后随 MD 保存，之后的推荐排除和去重都准确。
+    const identityTried = {};
+    function upgradeLibraryIdentity(size) {
+      if (feed.online !== true) return;
+      collectionList('wish').concat(collectionList('watched'))
+        .filter(function (entry) {
+          return needsIdentity(entry) && entry.id && !identityTried[entry.id];
+        })
+        .slice(0, size || 4)
+        .forEach(function (entry) {
+          identityTried[entry.id] = true;
+          enrichLibraryItem(entry.id);
+        });
     }
 
     // 用片名 + 年份把旧收藏里的豆瓣条目换成当前片源可用的条目，
@@ -2498,8 +2619,8 @@
         '<button type="button" class="movie-name-btn" data-open="' + esc(id) + '" data-title="' + esc(movie.title) + '">' +
         esc(movie.title) + '</button></h3>' +
         (line ? '<p class="movie-meta">' + esc(line) + '</p>' : '') +
-        '<div class="movie-marks">' + markButton('wish', id, '想看') +
-        markButton('watched', id, '看过') + '</div></div></article>';
+        '<div class="movie-marks">' + markButton('wish', movie, '想看') +
+        markButton('watched', movie, '看过') + '</div></div></article>';
     }
 
     function metaLine(parts) {
@@ -2508,6 +2629,27 @@
 
     // 详情改成用 TMDB 的 JSON 直接渲染：不再内嵌第三方页面，点开就是本地排版，
     // 断网、被墙、对方改版都不会白屏。
+    // 右上角条目跳转跟随当前条目所属片源：IMDb 条目给 IMDb 徽标，TMDB 条目给 TMDB 徽标。
+    // 两个片源用同一套详情排版，不再只给 TMDB 做跳转。
+    function renderDetailBadge(id, title) {
+      const link = detail.querySelector('.detail-douban');
+      if (!link) return;
+      const isImdb = /^tt\d{3,}$/.test(String(id || ''));
+      const name = title || id;
+      link.href = MovieSource.pageUrl(id);
+      link.setAttribute('aria-label', '在 ' + (isImdb ? 'IMDb' : 'TMDB') +
+        ' 打开《' + name + '》的条目页');
+      link.innerHTML = isImdb
+        ? '<svg viewBox="0 0 24 24" aria-hidden="true">' +
+          '<rect width="24" height="24" rx="6" fill="#f5c518"/>' +
+          '<text x="12" y="16.2" text-anchor="middle" font-size="7.6" font-weight="700" ' +
+          'fill="#111" font-family="PingFang SC,Microsoft YaHei,sans-serif">IMDb</text></svg>'
+        : '<svg viewBox="0 0 24 24" aria-hidden="true">' +
+          '<rect width="24" height="24" rx="6" fill="#01b4e4"/>' +
+          '<text x="12" y="16.6" text-anchor="middle" font-size="9" fill="#fff" ' +
+          'font-family="PingFang SC,Microsoft YaHei,sans-serif">TMDB</text></svg>';
+    }
+
     function openDetail(id, title) {
       if (!id) return;
       detail.hidden = false;
@@ -2515,15 +2657,13 @@
         '<span class="detail-spinner"></span><span>正在读取影片资料…</span></div>';
       const back = overlay.querySelector('.detail-back');
       if (back) back.focus();
-      const link = detail.querySelector('.detail-douban');
-      if (link) {
-        link.href = MovieSource.pageUrl(id);
-        link.setAttribute('aria-label', '在 TMDB 打开《' + (title || id) + '》的条目页');
-      }
+      renderDetailBadge(id, title);
       MovieSource.detail(id).then(function (movie) {
         if (!movie || detail.hidden) return;
+        renderDetailBadge(movie.id, movie.title);
         feed.known[movie.id] = {
-          id: movie.id, title: movie.title, year: movie.year,
+          id: movie.id, title: movie.title, originalTitle: movie.originalTitle,
+          imdbId: movie.imdbId, year: movie.year,
           rating: movie.rating, cover: movie.cover, genres: movie.genres
         };
         const runtime = movie.runtime ? Math.round(movie.runtime) + ' 分钟' : '';
@@ -2549,8 +2689,8 @@
             ? '<p class="fiche-score"><b>' + esc(score) + '</b><span>' +
               esc(votes || '评分') + '</span></p>' : '') +
           (tags ? '<p class="fiche-tags">' + esc(tags) + '</p>' : '') +
-          '<div class="movie-marks">' + markButton('wish', movie.id, '想看') +
-          markButton('watched', movie.id, '看过') + '</div>' +
+          '<div class="movie-marks">' + markButton('wish', movie, '想看') +
+          markButton('watched', movie, '看过') + '</div>' +
           '</div></div>' +
           (movie.directors.length
             ? '<p class="fiche-line"><span>导演</span>' + esc(movie.directors.join(' / ')) + '</p>'
@@ -2658,10 +2798,7 @@
       '<div class="movie-detail" id="movie-detail" hidden>' +
       '<div class="detail-bar"><button type="button" class="detail-back" data-detail-close>← 返回片库</button>' +
       '<a class="detail-douban" href="https://www.themoviedb.org/" target="_blank" rel="noopener noreferrer" ' +
-      'aria-label="在 TMDB 打开这个条目"><svg viewBox="0 0 24 24" aria-hidden="true">' +
-      '<rect width="24" height="24" rx="6" fill="#01b4e4"/>' +
-      '<text x="12" y="16.6" text-anchor="middle" font-size="9" fill="#fff" ' +
-      'font-family="PingFang SC,Microsoft YaHei,sans-serif">TMDB</text></svg></a></div>' +
+      'aria-label="在片源网站打开这个条目"></a></div>' +
       '<div class="detail-body" id="movie-detail-body"></div>' +
       '</div>' +
       '</div>';
@@ -2726,6 +2863,12 @@
         button.setAttribute('aria-pressed', String(on));
         if (button.dataset.src === 'tmdb' && state.hasKey) button.title = '已保存 Key' + tail;
       });
+      // Cinemeta 只能按英文片名搜；TMDB 的中文检索能命中更多字段。
+      if (searchInput) {
+        searchInput.placeholder = state.provider === 'tmdb'
+          ? '搜索片名、导演、演员、类型'
+          : '搜索片名（英文）';
+      }
       renderKeyPanel();
     }
 
@@ -2877,8 +3020,8 @@
         esc(item.title) + '</button></h3>' +
         '<p class="movie-meta">' + esc([item.year, item.added ? item.added + ' 收藏' : '']
           .filter(Boolean).join(' · ')) + '</p>' +
-        '<div class="movie-marks">' + markButton('wish', item.id, '想看') +
-        markButton('watched', item.id, '看过') + '</div>' +
+        '<div class="movie-marks">' + markButton('wish', item, '想看') +
+        markButton('watched', item, '看过') + '</div>' +
         '<button type="button" class="movie-remove" data-remove="' + esc(item.id) +
         '" aria-label="从' + (libraryKind === 'wish' ? '想看的电影' : '看过的电影') +
         '移除《' + esc(item.title) + '》">移除</button></div></article>';
@@ -3004,7 +3147,13 @@
 
     function syncMarks() {
       Array.prototype.forEach.call(overlay.querySelectorAll('[data-mark]'), function (button) {
-        const on = isIn(button.dataset.mark, button.dataset.id);
+        const movie = {
+          id: button.dataset.id,
+          title: button.dataset.title,
+          originalTitle: button.dataset.original,
+          year: button.dataset.year
+        };
+        const on = isIn(button.dataset.mark, movie);
         button.classList.toggle('is-on', on);
         button.setAttribute('aria-pressed', String(on));
         const label = button.dataset.mark === 'wish' ? '想看' : '看过';
@@ -3085,9 +3234,11 @@
         items.forEach(function (item) {
           if (item && item.id) feed.known[item.id] = item;
         });
-        const skip = filters.query.trim() ? [] : savedIds();
+        const hideSaved = !filters.query.trim();
         const visible = items.filter(function (item) {
-          if (!item || !item.id || skip.indexOf(item.id) >= 0 || used[item.id]) return false;
+          if (!item || !item.id || used[item.id]) return false;
+          // 跨片源判定：TMDB 收藏过的片不会因为 Cinemeta 用另一套 id 又被推出来。
+          if (hideSaved && isSaved(item)) return false;
           used[item.id] = true;
           return true;
         });
@@ -3181,7 +3332,6 @@
       renderStatus();
       scrollEl.scrollTop = 0;
 
-      const skip = savedIds();
       const batch = [];
       let pages = 0;
       let limit = 0;
@@ -3204,7 +3354,7 @@
           feed.hasMore = !!page.hasMore && items.length > 0;
           feed.note = page.note || '';
           const fresh = items.filter(function (item) {
-            return !feed.shown[item.id] && skip.indexOf(item.id) < 0;
+            return !feed.shown[item.id] && !isSaved(item);
           });
           fresh.forEach(function (item) {
             feed.shown[item.id] = true;
@@ -3371,7 +3521,12 @@
       if (mark) {
         const id = mark.dataset.id;
         const movie = feed.known[id] || findInCollection('wish', id) ||
-          findInCollection('watched', id);
+          findInCollection('watched', id) || {
+            id: id,
+            title: mark.dataset.title || '',
+            originalTitle: mark.dataset.original || '',
+            year: mark.dataset.year || ''
+          };
         if (!movie) return;
         const added = toggleCollection(mark.dataset.mark, movie);
         markDirty();
@@ -3476,6 +3631,7 @@
       if (available) {
         resetFeed(takeStartPage());
         repairLibrary(4);
+        upgradeLibraryIdentity(4);
       } else {
         renderStatus();
         showKeyPanel(true);
@@ -3540,11 +3696,19 @@
     const bits = [title];
     if (item.year) bits.push(item.year);
     if (item.rating) bits.push(item.rating.toFixed(1));
-    if (item.id) bits.push(item.id);
+    // IMDb id 自带 tt 前缀不会认错；TMDB 纯数字 id 加 tmdb= 前缀，
+    // 免得 4 位 id（如 2024）回读时被当成上映年份。
+    if (item.id) bits.push(/^tt\d{3,}$/.test(item.id) ? item.id : 'tmdb=' + item.id);
     if (item.added) bits.push(item.added);
     if (item.cover) bits.push(item.cover);
     if (item.genres && item.genres.length) bits.push('类型=' + item.genres.join('/'));
     if (item.regions && item.regions.length) bits.push('地区=' + item.regions.join('/'));
+    // 原名与 IMDb id 只在和展示字段不同时写入：它们负责在 TMDB / Cinemeta
+    // 两套 id 之间认出同一部片，导回后仍能去重、不再被推荐。
+    if (item.originalTitle && filmTitleKey(item.originalTitle) !== filmTitleKey(title)) {
+      bits.push('原名=' + item.originalTitle);
+    }
+    if (item.imdbId && item.imdbId !== item.id) bits.push('imdb=' + item.imdbId);
     return '- ' + bits.join(' · ');
   }
 
@@ -3554,7 +3718,7 @@
       '',
       '> 此文件由「人生日历」生成，可直接导入网站恢复记录。',
       '',
-      '- 格式版本：8',
+      '- 格式版本：9',
       '- 导出时间：' + nowStamp(),
       '- 主题色：' + state.color,
       ''
