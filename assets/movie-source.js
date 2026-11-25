@@ -182,7 +182,11 @@ window.MovieSource = (function () {
   }
 
   function providerOf(id) {
+    // 片源归属由 id 形态决定，不随「当前选中的片源」漂移：IMDb id 永远走 Cinemeta，
+    // 纯数字 id 永远是 TMDB 的条目。否则切到 Cinemeta 后打开 TMDB 收藏会去请求
+    // cinemeta/meta/movie/123.json 这种不存在的条目。
     if (isImdb(id)) return 'cinemeta';
+    if (/^\d{1,9}$/.test(String(id || ''))) return 'tmdb';
     return key ? 'tmdb' : 'cinemeta';
   }
 
@@ -583,6 +587,15 @@ window.MovieSource = (function () {
     });
   }
 
+  // 不管当前选的是哪个片源、有没有 TMDB Key，都按英文片名去 Cinemeta 查一次。
+  // 中文条目靠它补回 IMDb id，才能和英文片库里的同一部片合并。
+  function cinemetaLookup(name, year) {
+    const title = String(name || '').trim();
+    if (!title) return Promise.resolve(null);
+    const wantYear = /^\d{4}$/.test(String(year || '')) ? String(year) : '';
+    return cineLookup(title, wantYear);
+  }
+
   /* ---------------- 统一入口 ---------------- */
 
   const memo = new Map();
@@ -620,9 +633,37 @@ window.MovieSource = (function () {
   function detail(id) {
     if (!id) return Promise.reject(new Error('缺少电影 id'));
     const target = providerOf(id);
+    // TMDB 条目必须有 Key 才能读；没有 Key 时给出可操作的提示，而不是发一个空 Key 的 401。
+    if (target === 'tmdb' && !key) {
+      return Promise.reject(new Error('这条影片属于 TMDB 片库，需要先填一个 TMDB API Key 才能打开'));
+    }
     return memoJSON('detail|' + target + '|' + id, function () {
       if (target === 'tmdb') return tmdbDetail(id);
       return cineDetail(id);
+    });
+  }
+
+  // 用 IMDb id 反查 TMDB 数字 id：两个片源要认出同一部片，
+  // 收藏里存的 IMDb id 必须能映射到 TMDB 条目，否则切到 TMDB 就丢了状态。
+  function findByImdb(imdbId) {
+    const imdb = String(imdbId || '').trim();
+    if (!/^tt\d{3,}$/.test(imdb) || !key) return Promise.resolve(null);
+    return memoJSON('find|' + imdb, function () {
+      return request(tmdbUrl('find/' + encodeURIComponent(imdb), {
+        external_source: 'imdb_id'
+      })).then(function (payload) {
+        const list = payload && Array.isArray(payload.movie_results)
+          ? payload.movie_results
+          : [];
+        const hit = list[0];
+        if (!hit || !hit.id) return null;
+        return {
+          id: String(hit.id),
+          title: hit.title || hit.original_title || '',
+          originalTitle: hit.original_title || '',
+          year: yearOf(hit.release_date)
+        };
+      });
     });
   }
 
@@ -739,6 +780,8 @@ window.MovieSource = (function () {
     search: search,
     detail: detail,
     lookup: lookup,
+    findByImdb: findByImdb,
+    cinemetaLookup: cinemetaLookup,
     poster: function (value) { return value && /^https?:\/\//.test(value) ? value : tmdbImage(value, 'w342'); },
     pageUrl: pageUrl,
     doubanSearchUrl: doubanSearchUrl,
