@@ -510,10 +510,16 @@
     if (parts.length > 1 && /^https?:\/\/\S+$/.test(parts[parts.length - 1])) item.cover = parts.pop();
     if (parts.length > 1 && /^\d{4}-\d{2}-\d{2}$/.test(parts[parts.length - 1])) item.added = parts.pop();
     if (parts.length > 1 && /^\d{5,}$/.test(parts[parts.length - 1])) item.id = parts.pop();
-    if (parts.length > 1 && /^\d+(?:\.\d+)?$/.test(parts[parts.length - 1])) {
+    // 评分只会是 0-10 的一位小数（如 9.2、8），4 位纯数字是年份，不能当评分吃掉。
+    if (parts.length > 1 && /^\d{1,2}(?:\.\d)?$/.test(parts[parts.length - 1])) {
       item.rating = Number(parts.pop()) || 0;
     }
     if (parts.length > 1 && /^\d{4}$/.test(parts[parts.length - 1])) item.year = parts.pop();
+    // 旧版解析曾把 4 位年份写成评分（如 2026.0），读回时还原成年份。
+    if (!item.year && item.rating >= 1900 && item.rating <= 2100) {
+      item.year = String(Math.round(item.rating));
+      item.rating = 0;
+    }
     item.title = parts.join(' · ').trim();
     if (!item.title) return null;
     return normalizeCollectionItem(item);
@@ -843,12 +849,15 @@
         parsed = parseMarkdown(text);
       } else {
         const current = countData();
-        needsSync = current.years > 0 || current.days > 0;
+        needsSync = current.years > 0 || current.days > 0 || hasLibraryContent();
       }
     }
 
     if (parsed) {
       state.years = parsed.years;
+      // 电影清单同样是文件内容的一部分，恢复文件时必须一起读回来，
+      // 否则重开页面后清单为空，下一次写入会把文件里的收藏覆盖掉。
+      state.library = parsed.library || { wish: [], watched: [] };
       if (parsed.color) state.color = parsed.color;
       applyTheme(state.color);
     }
