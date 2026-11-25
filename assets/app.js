@@ -39,6 +39,19 @@
     { value: 'R', label: '评价人数' },
     { value: 'T', label: '最新上映' }
   ];
+  // 「想看的电影」「看过的电影」在本地排序，选项与豆瓣排序不同。
+  const LIBRARY_SORTS = [
+    { value: 'added', label: '收藏时间' },
+    { value: 'rating', label: '评分最高' },
+    { value: 'year', label: '上映年份' },
+    { value: 'title', label: '片名' }
+  ];
+  // 清单里的地区筛选用条目自带的地区字段，「华语」「欧美」按豆瓣的口径展开。
+  const REGION_GROUPS = {
+    '华语': ['中国大陆', '中国香港', '中国台湾', '香港', '台湾', '澳门', '中国'],
+    '欧美': ['美国', '英国', '法国', '德国', '意大利', '西班牙', '加拿大', '澳大利亚',
+      '爱尔兰', '瑞典', '丹麦', '荷兰', '俄罗斯', '波兰', '奥地利', '比利时']
+  };
 
   const WEATHERS = [
     { label: '晴', icon: 'sun' },
@@ -406,6 +419,18 @@
     return state.library[kind];
   }
 
+  // 类型 / 地区用来在「想看的电影」「看过的电影」里做与找电影一致的筛选。
+  // 列表接口不返回这两个字段，收藏时会异步用豆瓣条目补齐，存进 MD 一起保存。
+  function normalizeTagList(value, limit) {
+    const list = Array.isArray(value) ? value : (typeof value === 'string' ? value.split(/[\/、,]/) : []);
+    const out = [];
+    list.forEach(function (entry) {
+      const text = typeof entry === 'string' ? entry.replace(/\s+/g, ' ').trim() : '';
+      if (text && out.indexOf(text) < 0 && out.length < limit) out.push(text);
+    });
+    return out;
+  }
+
   function normalizeCollectionItem(item) {
     const raw = item && typeof item === 'object' ? item : {};
     const title = typeof raw.title === 'string' ? raw.title.replace(/\s+/g, ' ').trim() : '';
@@ -416,7 +441,11 @@
       : 0;
     const cover = typeof raw.cover === 'string' && /^https?:\/\//.test(raw.cover) ? raw.cover : '';
     const added = /^\d{4}-\d{2}-\d{2}$/.test(raw.added || '') ? raw.added : '';
-    return { id: id, title: title, year: year, rating: rating, cover: cover, added: added };
+    return {
+      id: id, title: title, year: year, rating: rating, cover: cover, added: added,
+      genres: normalizeTagList(raw.genres, 4),
+      regions: normalizeTagList(raw.regions || raw.region, 3)
+    };
   }
 
   function findInCollection(kind, id) {
@@ -507,6 +536,16 @@
     if (!text) return null;
     const parts = text.split(/\s+·\s+/).map(function (part) { return part.trim(); });
     const item = { title: '', year: '', rating: 0, id: '', cover: '', added: fallbackDate || '' };
+    // 类型 / 地区用带标签的段落写在行尾，既能被旧解析器当成普通文本保留，
+    // 也能让清单页做与找电影一致的筛选。
+    const tags = { genres: [], regions: [] };
+    for (let index = parts.length - 1; index >= 0; index -= 1) {
+      const tagged = /^(类型|地区)=(.+)$/.exec(parts[index]);
+      if (!tagged) continue;
+      const key = tagged[1] === '类型' ? 'genres' : 'regions';
+      tags[key] = normalizeTagList(tagged[2], 4);
+      parts.splice(index, 1);
+    }
     if (parts.length > 1 && /^https?:\/\/\S+$/.test(parts[parts.length - 1])) item.cover = parts.pop();
     if (parts.length > 1 && /^\d{4}-\d{2}-\d{2}$/.test(parts[parts.length - 1])) item.added = parts.pop();
     if (parts.length > 1 && /^\d{5,}$/.test(parts[parts.length - 1])) item.id = parts.pop();
@@ -522,6 +561,8 @@
     }
     item.title = parts.join(' · ').trim();
     if (!item.title) return null;
+    item.genres = tags.genres;
+    item.regions = tags.regions;
     return normalizeCollectionItem(item);
   }
 
@@ -2184,6 +2225,7 @@
     if (document.querySelector('.expense-modal')) return;
     const node = dayNode(year, month, day, true);
     const filters = { genre: '全部', region: '全部', decade: '全部', sort: 'U', query: '' };
+    const MOVIE_PAGE = 20;   // 豆瓣列表每页固定 20 条
     const feed = {
       online: null,
       items: [],
@@ -2193,6 +2235,7 @@
       loading: false,
       token: 0,
       error: '',
+      unavailable: '',
       note: ''
     };
 
@@ -2276,23 +2319,47 @@
         (on ? '✓' : '＋') + ' ' + label + '</button>';
     }
 
-    // 列表接口没有年份，收藏后再补一次豆瓣条目信息，让清单能显示年份与评分。
+    // 列表接口没有年份、类型和地区，收藏后用豆瓣条目补齐，清单里才能筛选、排序。
+    const enriching = {};
+    function needsEnrich(item) {
+      if (!item) return false;
+      return !item.year || !item.rating || !(item.genres || []).length || !(item.regions || []).length;
+    }
+
     function enrichLibraryItem(id) {
-      if (feed.online !== true || !id) return;
+      if (feed.online !== true || !id || enriching[id]) return;
       const item = findInCollection('wish', id) || findInCollection('watched', id);
-      if (!item || (item.year && item.rating)) return;
+      if (!needsEnrich(item)) return;
+      enriching[id] = true;
       MovieSource.detail(id).then(function (data) {
-        if (!data) return;
+        enriching[id] = false;
+        if (!data || data.unavailable) return;
         const target = findInCollection('wish', id) || findInCollection('watched', id);
         if (!target) return;
         let changed = false;
         if (!target.year && data.year) { target.year = data.year; changed = true; }
         if (!target.rating && data.rating) { target.rating = data.rating; changed = true; }
         if (!target.title && data.title) { target.title = data.title; changed = true; }
+        if (!(target.genres || []).length && data.genres && data.genres.length) {
+          target.genres = normalizeTagList(data.genres, 4);
+          changed = true;
+        }
+        if (!(target.regions || []).length && data.region) {
+          target.regions = normalizeTagList(data.region, 3);
+          changed = true;
+        }
         if (!changed) return;
         markDirty();
-        if (libraryKind === 'wish' || libraryKind === 'watched') renderLibraryView();
-      }).catch(function () {});
+        if (libraryKind) renderLibraryView();
+      }).catch(function () { enriching[id] = false; });
+    }
+
+    // 清单页需要元数据才能筛选：打开清单时对缺字段的条目补一次（豆瓣限流时静默跳过）。
+    function enrichLibraryList() {
+      if (!libraryKind) return;
+      collectionList(libraryKind).slice(0, 8).forEach(function (entry) {
+        if (needsEnrich(entry)) enrichLibraryItem(entry.id);
+      });
     }
 
     function cardMarkup(movie) {
@@ -2433,7 +2500,7 @@
       '<button type="button" class="expense-close movie-close" aria-label="关闭找电影">×</button>' +
       '</div></div>' +
       '<div class="movie-scroll" id="movie-scroll">' +
-      '<div class="movie-find" id="movie-find">' +
+      '<div class="movie-controls">' +
       '<div class="movie-toolbar">' +
       '<label class="movie-search"><svg viewBox="0 0 24 24" aria-hidden="true">' +
       '<circle cx="11" cy="11" r="6.4"/><path d="m16 16 4 4"/></svg>' +
@@ -2443,7 +2510,10 @@
       MOVIE_SORTS.map(function (item) {
         return '<option value="' + esc(item.value) + '">' + esc(item.label) + '</option>';
       }).join('') +
-      '</select></label></div>' +
+      '</select></label>' +
+      '<button type="button" class="movie-shuffle" id="movie-shuffle" title="换一批电影">' +
+      '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.6"/>' +
+      '<path d="M20 5v6h-6"/></svg>换一批</button></div>' +
       '<div class="movie-filters">' +
       '<div class="filter-row"><span class="filter-label">类型</span><div class="filter-chips">' +
       chipRow('genre', MOVIE_GENRES, '全部') + '</div></div>' +
@@ -2451,8 +2521,9 @@
       chipRow('region', MOVIE_REGIONS, '全部') + '</div></div>' +
       '<div class="filter-row"><span class="filter-label">年代</span><div class="filter-chips">' +
       chipRow('decade', MOVIE_DECADES.map(function (item) { return item.label; }), '全部') +
-      '</div></div></div>' +
+      '</div></div></div></div>' +
       '<p class="movie-count" id="movie-count" role="status" aria-live="polite"></p>' +
+      '<div class="movie-find" id="movie-find">' +
       '<div class="movie-grid" id="movie-grid"></div>' +
       '<div class="movie-foot"><button type="button" class="movie-more" id="movie-more" hidden>加载更多</button></div>' +
       '</div>' +
@@ -2480,6 +2551,7 @@
     const sourceNote = overlay.querySelector('#movie-source-note');
     const searchInput = overlay.querySelector('#movie-search');
     const sortSelect = overlay.querySelector('#movie-sort');
+    const shuffleButton = overlay.querySelector('#movie-shuffle');
     const closeButton = overlay.querySelector('.movie-close');
     const detail = overlay.querySelector('#movie-detail');
     const detailBody = overlay.querySelector('#movie-detail-body');
@@ -2521,28 +2593,108 @@
         '移除《' + esc(item.title) + '》">移除</button></div></article>';
     }
 
+    function regionMatches(item, region) {
+      if (!region || region === '全部') return true;
+      const regions = item.regions || [];
+      if (!regions.length) return false;
+      const group = REGION_GROUPS[region];
+      return regions.some(function (entry) {
+        if (group) return group.indexOf(entry) >= 0;
+        return entry === region || entry.indexOf(region) >= 0;
+      });
+    }
+
+    function filtersActive() {
+      return filters.genre !== '全部' || filters.region !== '全部' ||
+        filters.decade !== '全部' || !!filters.query.trim();
+    }
+
+    // 清单在本地筛选：类型 / 地区 / 年代 / 关键词都是收藏时随 MD 一起保存的字段。
+    function libraryFiltered() {
+      const keyword = filters.query.trim().toLowerCase();
+      const decade = MOVIE_DECADES.filter(function (item) {
+        return item.label === filters.decade;
+      })[0] || {};
+      return collectionList(libraryKind).filter(function (item) {
+        if (keyword) {
+          const hay = [item.title, item.year, (item.genres || []).join(' '),
+            (item.regions || []).join(' ')].join(' ').toLowerCase();
+          if (hay.indexOf(keyword) < 0) return false;
+        }
+        if (filters.genre !== '全部' && (item.genres || []).indexOf(filters.genre) < 0) return false;
+        if (!regionMatches(item, filters.region)) return false;
+        if (decade.from) {
+          const year = Number(item.year);
+          if (!year || year < decade.from || year > decade.to) return false;
+        }
+        return true;
+      });
+    }
+
+    function sortLibrary(list) {
+      const sort = filters.sort;
+      return list.sort(function (a, b) {
+        if (sort === 'rating') {
+          return (b.rating || 0) - (a.rating || 0) || String(b.year || '').localeCompare(String(a.year || ''));
+        }
+        if (sort === 'year') {
+          return String(b.year || '').localeCompare(String(a.year || '')) ||
+            (b.rating || 0) - (a.rating || 0);
+        }
+        if (sort === 'title') return String(a.title || '').localeCompare(String(b.title || ''), 'zh-Hans-CN');
+        return String(b.added || '').localeCompare(String(a.added || ''));
+      });
+    }
+
     function renderLibraryView() {
       if (!libraryKind) return;
-      const list = collectionList(libraryKind).slice();
+      const all = collectionList(libraryKind).slice();
       const isWish = libraryKind === 'wish';
-      if (!list.length) {
+      const name = isWish ? '想看的电影' : '看过的电影';
+      if (!all.length) {
         libraryEl.innerHTML = '<p class="movie-empty">' + (isWish
-          ? '还没有想看的电影 · 点上方的「想看」把片子存进来。'
-          : '还没有看过的电影 · 点上方的「看过」记录一下。') + '</p>';
+          ? '还没有想看的电影 · 在上方点「＋ 想看」把片子存进来。'
+          : '还没有看过的电影 · 在上方点「＋ 看过」记录一下。') + '</p>';
         return;
       }
-      list.sort(function (a, b) { return (b.added || '').localeCompare(a.added || ''); });
-      libraryEl.innerHTML = '<p class="movie-count">' + (isWish ? '想看的电影' : '看过的电影') +
-        ' <b>' + list.length + '</b> 部</p>' +
-        '<div class="movie-grid">' + list.map(libraryCard).join('') + '</div>';
+      const narrowed = filtersActive();
+      const list = sortLibrary(libraryFiltered());
+      const count = narrowed
+        ? '<b>' + list.length + '</b> / ' + all.length + ' 部'
+        : '<b>' + all.length + '</b> 部';
+      let html = '<p class="movie-count">' + name + ' ' + count + '</p>';
+      html += list.length
+        ? '<div class="movie-grid">' + list.map(libraryCard).join('') + '</div>'
+        : '<p class="movie-empty">没有符合条件的影片，换个关键词或筛选条件试试。</p>';
+      if (narrowed && all.some(needsEnrich)) {
+        html += '<p class="movie-note movie-hint">' +
+          '部分影片还没有类型 / 地区资料（收藏时联网才能补齐），筛选时会漏掉它们。' +
+          '</p>';
+      }
+      libraryEl.innerHTML = html;
+    }
+
+    // 清单与找电影共用一个搜索框和筛选条，切换视图时把排序选项换成对应的那一套。
+    function applySortOptions() {
+      const list = libraryKind ? LIBRARY_SORTS : MOVIE_SORTS;
+      const values = list.map(function (item) { return item.value; });
+      if (values.indexOf(filters.sort) < 0) filters.sort = list[0].value;
+      sortSelect.innerHTML = list.map(function (item) {
+        return '<option value="' + esc(item.value) + '">' + esc(item.label) + '</option>';
+      }).join('');
+      sortSelect.value = filters.sort;
+      shuffleButton.hidden = !!libraryKind;
     }
 
     function openLibrary(kind) {
       libraryKind = kind;
       findEl.hidden = true;
       libraryEl.hidden = false;
+      countEl.hidden = true;
       renderLibraryButtons();
+      applySortOptions();
       renderLibraryView();
+      enrichLibraryList();
       scrollEl.scrollTop = 0;
     }
 
@@ -2551,7 +2703,10 @@
       libraryEl.hidden = true;
       findEl.hidden = false;
       renderLibraryButtons();
+      applySortOptions();
+      countEl.hidden = false;
       scrollEl.scrollTop = 0;
+      renderStatus();
     }
 
     function syncMarks() {
@@ -2594,10 +2749,19 @@
         '<button type="button" class="movie-retry" data-start>已启动，重新检测</button>';
     }
 
+    // 成功时不再显示「已加载 20 部 · 豆瓣电影片库 …」这类小字：
+    // 网格本身就是结果，只有在连不上、被限流、无结果或放宽条件时才给提示。
     function renderStatus() {
-      if (feed.error) {
-        countEl.innerHTML = '<span class="movie-error">' + esc(feed.error) + '</span>' +
-          '<button type="button" class="movie-retry" data-retry>重试</button>';
+      if (libraryKind) {
+        countEl.hidden = true;
+        countEl.innerHTML = '';
+        moreButton.hidden = true;
+        return;
+      }
+      countEl.hidden = false;
+      if (feed.error || feed.unavailable) {
+        countEl.innerHTML = '<span class="movie-error">' + esc(feed.error || feed.unavailable) +
+          '</span><button type="button" class="movie-retry" data-retry>重试</button>';
       } else if (feed.loading && !feed.items.length) {
         countEl.textContent = '正在加载豆瓣片库…';
       } else if (feed.online === null) {
@@ -2606,19 +2770,15 @@
         countEl.innerHTML = offlineNotice();
       } else if (!feed.items.length) {
         countEl.textContent = feed.note || '没有符合条件的电影，换个筛选条件或关键词试试。';
+      } else if (feed.note) {
+        countEl.innerHTML = '<span class="movie-note">' + esc(feed.note) + '</span>';
       } else {
-        const keyword = filters.query.trim();
-        countEl.innerHTML = '已加载 <b>' + feed.items.length + '</b>部 ·豆瓣电影片库' +
-          (keyword ? ' ·关键词「' + esc(keyword) + '」' : ' ·已看过的不再推荐') +
-          (feed.loading ? ' ·加载中…' : '');
-        if (feed.note) {
-          countEl.innerHTML += '<span class="movie-note">' + esc(feed.note) + '</span>';
-        }
+        countEl.hidden = true;
+        countEl.innerHTML = '';
       }
-      moreButton.hidden = !feed.hasMore || !!feed.error;
+      moreButton.hidden = !feed.hasMore || !!feed.error || !!feed.unavailable;
       moreButton.disabled = feed.loading;
       moreButton.textContent = feed.loading ? '加载中…' : '加载更多';
-      sourceNote.textContent = '豆瓣电影片库 · 点击海报查看豆瓣条目';
     }
 
     function skeleton() {
@@ -2635,6 +2795,9 @@
     function fetchChunk(token, remaining) {
       return requestPage().then(function (page) {
         if (token !== feed.token) return { items: [], hasMore: false };
+        if (page && page.unavailable) {
+          return { items: [], hasMore: false, unavailable: page.unavailable };
+        }
         const items = Array.isArray(page.items) ? page.items : [];
         items.forEach(function (item) {
           if (item && item.id) feed.known[item.id] = item;
@@ -2654,13 +2817,19 @@
     }
 
     function loadMore() {
-      if (feed.loading || !feed.hasMore || feed.error) return;
+      if (feed.loading || !feed.hasMore || feed.error || feed.unavailable) return;
       const token = feed.token;
       feed.loading = true;
       renderStatus();
       fetchChunk(token, 4).then(function (result) {
         if (token !== feed.token) return;
         feed.loading = false;
+        if (result.unavailable) {
+          feed.unavailable = result.unavailable;
+          clearSkeleton();
+          renderStatus();
+          return;
+        }
         feed.items = feed.items.concat(result.items);
         clearSkeleton();
         if (result.items.length) {
@@ -2679,17 +2848,35 @@
       });
     }
 
-    function resetFeed() {
+    // 「换一批」用随机起始页，绕开已经看过的几页，得到一批全新的推荐。
+    const usedStarts = {};
+    function pickFreshStart() {
+      const candidates = [];
+      for (let page = 0; page < 25; page += 1) {
+        if (!usedStarts[page * MOVIE_PAGE]) candidates.push(page * MOVIE_PAGE);
+      }
+      if (!candidates.length) {
+        Object.keys(usedStarts).forEach(function (key) { delete usedStarts[key]; });
+        for (let page = 0; page < 25; page += 1) candidates.push(page * MOVIE_PAGE);
+      }
+      const picked = candidates[Math.floor(Math.random() * candidates.length)];
+      usedStarts[picked] = true;
+      return picked;
+    }
+
+    function resetFeed(startAt) {
       feed.token += 1;
       feed.items = [];
-      feed.start = 0;
+      feed.start = startAt || 0;
       feed.hasMore = true;
       feed.loading = false;
       feed.error = '';
+      feed.unavailable = '';
       feed.note = '';
       grid.innerHTML = '';
       skeleton();
       renderStatus();
+      scrollEl.scrollTop = 0;
       loadMore();
     }
 
@@ -2756,7 +2943,8 @@
           item.classList.toggle('is-active', on);
           item.setAttribute('aria-pressed', String(on));
         });
-        resetFeed();
+        if (libraryKind) renderLibraryView();
+        else resetFeed();
         return;
       }
 
@@ -2842,13 +3030,20 @@
       clearTimeout(searchTimer);
       searchTimer = setTimeout(function () {
         filters.query = searchInput.value;
-        resetFeed();
+        if (libraryKind) renderLibraryView();
+        else resetFeed();
       }, 200);
     });
 
     sortSelect.addEventListener('change', function () {
       filters.sort = sortSelect.value;
-      resetFeed();
+      if (libraryKind) renderLibraryView();
+      else resetFeed();
+    });
+
+    shuffleButton.addEventListener('click', function () {
+      if (libraryKind) return;
+      resetFeed(pickFreshStart());
     });
 
     document.addEventListener('keydown', onKey);
@@ -2863,6 +3058,7 @@
       observer.observe(moreButton);
     }
 
+    applySortOptions();
     MovieSource.online().then(function (available) {
       if (!overlay.isConnected) return;
       feed.online = available;
@@ -2930,6 +3126,8 @@
     if (item.id) bits.push(item.id);
     if (item.added) bits.push(item.added);
     if (item.cover) bits.push(item.cover);
+    if (item.genres && item.genres.length) bits.push('类型=' + item.genres.join('/'));
+    if (item.regions && item.regions.length) bits.push('地区=' + item.regions.join('/'));
     return '- ' + bits.join(' · ');
   }
 
@@ -2939,7 +3137,7 @@
       '',
       '> 此文件由「人生日历」生成，可直接导入网站恢复记录。',
       '',
-      '- 格式版本：7',
+      '- 格式版本：8',
       '- 导出时间：' + nowStamp(),
       '- 主题色：' + state.color,
       ''

@@ -57,7 +57,11 @@ PAGE_SIZE = 20                 # 豆瓣每页固定 20 条
 SORT_VALUES = {"U", "S", "R", "T"}   # 综合 / 评分 / 评价人数 / 最新
 DOUBAN_SORT = {"U": "U", "S": "S", "R": "R", "T": "T"}
 
-TRANSIENT_STATUS = {403, 418, 429, 500, 502, 503, 504}
+# 403/418 是豆瓣的机器人判定（返回「登录跳转页」）。继续重试只会加重风控，
+# 所以这两个状态立刻失败，并让整个进程进入冷却，期间只读缓存、不再打豆瓣。
+BLOCKED_STATUS = {403, 418}
+TRANSIENT_STATUS = {429, 500, 502, 503, 504}
+BLOCK_COOLDOWN = 10 * 60      # 触发风控后 10 分钟内不再请求豆瓣接口
 
 LOCAL_ORIGIN = re.compile(r"^(?:null|https?://(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?)$", re.I)
 
@@ -122,18 +126,48 @@ THROTTLE = Throttle(0.35)
 MEDIA_SLOTS = threading.BoundedSemaphore(8)   # CDN 资源：并发 8，不限间隔
 
 
+class DoubanBlocked(Exception):
+    """豆瓣对本机 IP 触发了风控（403 / 418，返回「登录跳转」页）。"""
+
+    def __init__(self, code: int, retry_after: int) -> None:
+        self.code = code
+        self.retry_after = retry_after
+        super().__init__("豆瓣限流（HTTP %d），请 %d 分钟后再试" % (code, max(1, retry_after // 60)))
+
+
+_BLOCK_LOCK = threading.Lock()
+_BLOCKED_UNTIL = 0.0
+
+
+def cooldown_remaining() -> int:
+    """剩余冷却秒数；0 表示当前可以请求豆瓣。"""
+    with _BLOCK_LOCK:
+        return max(0, int(round(_BLOCKED_UNTIL - time.monotonic())))
+
+
+def mark_blocked(code: int = 403) -> None:
+    global _BLOCKED_UNTIL
+    with _BLOCK_LOCK:
+        _BLOCKED_UNTIL = max(_BLOCKED_UNTIL, time.monotonic() + BLOCK_COOLDOWN)
+
+
 def http_get(url: str, referer: str, accept: str = "*/*",
              ua: str | None = None, lane: str = "api",
              timeout: float = 15) -> tuple[bytes, str]:
     """带重试的 GET，返回 (body, content_type)。
 
     lane="api" 走限速队列（豆瓣接口），lane="media" 只限制并发（图片 CDN）。
+    403/418 直接抛 DoubanBlocked 并让进程进入冷却，避免把风控越坐越深。
     """
     headers = {
         "User-Agent": ua or USER_AGENT,
         "Referer": referer,
         "Accept": accept,
-        "Accept-Language": "zh-CN,zh;q=0.9",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.6",
+        "X-Requested-With": "XMLHttpRequest",
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-origin",
     }
     last_error: Exception | None = None
     for attempt in range(3):
@@ -148,6 +182,9 @@ def http_get(url: str, referer: str, accept: str = "*/*",
                     return response.read(), response.headers.get("Content-Type", "")
         except urllib.error.HTTPError as exc:
             last_error = exc
+            if exc.code in BLOCKED_STATUS:
+                mark_blocked(exc.code)
+                raise DoubanBlocked(exc.code, BLOCK_COOLDOWN) from exc
             if exc.code in TRANSIENT_STATUS and attempt < 2:
                 time.sleep(0.9 * (attempt + 1))
                 continue
@@ -162,6 +199,9 @@ def http_get(url: str, referer: str, accept: str = "*/*",
 
 
 def http_get_json(url: str, referer: str) -> object:
+    remaining = cooldown_remaining()
+    if remaining:
+        raise DoubanBlocked(403, remaining)
     body, _ = http_get(url, referer, accept="application/json, text/plain, */*")
     text = body.decode("utf-8", "replace").strip()
     # 豆瓣偶尔返回带安全前缀的 JSON，这里只取第一个 { 或 [ 之后的部分。
@@ -174,6 +214,9 @@ def cache_path(kind: str, key: str) -> Path:
     return CACHE_DIR / kind / digest
 
 
+STALE_TTL = 30 * 24 * 60 * 60   # 冷却期间可以用多久以前的缓存
+
+
 def cache_read_json(key: str, ttl: float) -> object | None:
     path = cache_path("api", key)
     try:
@@ -182,6 +225,29 @@ def cache_read_json(key: str, ttl: float) -> object | None:
         return json.loads(path.read_text("utf-8"))
     except (OSError, ValueError):
         return None
+
+
+def cached_with_fallback(key: str, fetch, label: str):
+    """先读有效缓存；没有就请求豆瓣；被风控时退回任意陈旧缓存。
+
+    fetch() 负责真正取数据并返回 dict；返回值统一带上 stale / note 字段，
+    前端据此提示「豆瓣限流，显示的是之前的结果」而不是弹一个 502。
+    """
+    cached = cache_read_json(key, API_TTL)
+    if isinstance(cached, dict):
+        return cached
+    try:
+        result = fetch()
+    except DoubanBlocked as exc:
+        stale = cache_read_json(key, STALE_TTL)
+        if isinstance(stale, dict):
+            result = dict(stale)
+            result["stale"] = True
+            result["note"] = "%s：%s，显示的是之前缓存的结果" % (label, exc)
+            return result
+        raise
+    cache_write_json(key, result)
+    return result
 
 
 def cache_write_json(key: str, payload: object) -> None:
@@ -290,16 +356,15 @@ def douban_discover(query: dict[str, list[str]]) -> dict:
         )
     url = "https://movie.douban.com/j/new_search_subjects?" + urllib.parse.urlencode(params)
     key = "discover:" + urllib.parse.urlencode(params)
-    cached = cache_read_json(key, API_TTL)
-    if cached is not None:
-        return cached
-    payload = http_get_json(url, "https://movie.douban.com/explore")
-    raw_items = payload.get("data") if isinstance(payload, dict) else None
-    items = [normalize_subject(item) for item in (raw_items or []) if isinstance(item, dict)]
-    items = [item for item in items if item["id"] and item["title"]]
-    result = {"items": items, "hasMore": len(items) >= PAGE_SIZE, "start": int(params["start"])}
-    cache_write_json(key, result)
-    return result
+
+    def fetch() -> dict:
+        payload = http_get_json(url, "https://movie.douban.com/explore")
+        raw_items = payload.get("data") if isinstance(payload, dict) else None
+        items = [normalize_subject(item) for item in (raw_items or []) if isinstance(item, dict)]
+        items = [item for item in items if item["id"] and item["title"]]
+        return {"items": items, "hasMore": len(items) >= PAGE_SIZE, "start": int(params["start"])}
+
+    return cached_with_fallback(key, fetch, "豆瓣片库暂时连不上")
 
 
 TITLE_NOISE_RE = re.compile(r"[\s·・:：,，.。!！?？'\"“”‘’()（）\[\]【】<>《》\-—_/\\|]+")
@@ -332,8 +397,8 @@ def douban_search_by_title(keyword: str, start: int, query: dict[str, list[str]]
             year_to if year_to.isdigit() else "2030",
         )
     key = "search-title:" + urllib.parse.urlencode(params)
-    cached = cache_read_json(key, API_TTL)
-    if cached is None:
+
+    def fetch() -> dict:
         needle = title_key(keyword)
         matches: list[dict] = []
         seen: set[str] = set()
@@ -358,51 +423,56 @@ def douban_search_by_title(keyword: str, start: int, query: dict[str, list[str]]
             if len(raw_items) < PAGE_SIZE:
                 break
             page_start += PAGE_SIZE
-        cached = {"matches": matches, "keyword": keyword}
-        cache_write_json(key, cached)
+        return {"matches": matches, "keyword": keyword}
+
+    cached = cached_with_fallback(key, fetch, "豆瓣片库暂时连不上")
     matches = cached.get("matches") or []
     items = matches[start:start + PAGE_SIZE]
     if matches:
         note = "关键词匹配为空，已按片名从豆瓣全库召回 %d 部" % len(matches)
     else:
         note = "关键词没有结果，豆瓣全库也没有片名包含「%s」的影片" % keyword
-    return {
+    result = {
         "items": items,
         "hasMore": len(matches) > start + len(items),
         "start": start,
         "fallback": True,
         "note": note,
     }
+    if cached.get("stale"):
+        result["stale"] = True
+        result["note"] = cached.get("note", note)
+    return result
 
 
 def douban_search(query: dict[str, list[str]]) -> dict:
     keyword = (query.get("q") or [""])[0].strip()[:60]
     if not keyword:
         return {"items": [], "hasMore": False, "start": 0, "fallback": False}
-    start = str(max(0, int((query.get("start") or ["0"])[0] or 0)))
+    start = int(max(0, int((query.get("start") or ["0"])[0] or 0)))
     params = {
         "type": "movie",
         "tag": keyword,
         "sort": "recommend",
         "page_limit": str(PAGE_SIZE),
-        "page_start": start,
+        "page_start": str(start),
     }
     url = "https://movie.douban.com/j/search_subjects?" + urllib.parse.urlencode(params)
     key = "search:" + urllib.parse.urlencode(params)
-    cached = cache_read_json(key, API_TTL)
-    if cached is not None:
-        result = cached
-    else:
+
+    def fetch() -> dict:
         payload = http_get_json(url, "https://movie.douban.com/")
         raw_items = payload.get("subjects") if isinstance(payload, dict) else None
         items = [normalize_subject(item) for item in (raw_items or []) if isinstance(item, dict)]
         items = [item for item in items if item["id"] and item["title"]]
-        result = {"items": items, "hasMore": len(items) >= PAGE_SIZE, "start": int(start), "fallback": False}
-        cache_write_json(key, result)
-    if result.get("items") or int(start) > 0:
+        return {"items": items, "hasMore": len(items) >= PAGE_SIZE,
+                "start": start, "fallback": False}
+
+    result = cached_with_fallback(key, fetch, "豆瓣搜索暂时连不上")
+    if result.get("items") or start > 0:
         return result
     # 关键词接口无结果：回退到 discover 接口按片名召回（如《两京十五日》）。
-    return douban_search_by_title(keyword, int(start), query)
+    return douban_search_by_title(keyword, start, query)
 
 
 def douban_detail(query: dict[str, list[str]]) -> dict:
@@ -410,17 +480,16 @@ def douban_detail(query: dict[str, list[str]]) -> dict:
     if not re.fullmatch(r"\d{4,12}", subject_id):
         raise ValueError("电影 id 不合法")
     key = "detail:" + subject_id
-    cached = cache_read_json(key, API_TTL)
-    if cached is not None:
-        return cached
     url = "https://movie.douban.com/j/subject_abstract?subject_id=" + subject_id
-    payload = http_get_json(url, "https://movie.douban.com/subject/" + subject_id + "/")
-    subject = payload.get("subject") if isinstance(payload, dict) else None
-    if not isinstance(subject, dict):
-        raise ValueError("豆瓣没有返回该条目")
-    result = normalize_detail(subject)
-    cache_write_json(key, result)
-    return result
+
+    def fetch() -> dict:
+        payload = http_get_json(url, "https://movie.douban.com/subject/" + subject_id + "/")
+        subject = payload.get("subject") if isinstance(payload, dict) else None
+        if not isinstance(subject, dict):
+            raise ValueError("豆瓣没有返回该条目")
+        return normalize_detail(subject)
+
+    return cached_with_fallback(key, fetch, "豆瓣条目暂时打不开")
 
 
 POSTER_HOST_RE = re.compile(r"(^|\.)doubanio\.com$")
@@ -836,13 +905,20 @@ class Handler(BaseHTTPRequestHandler):
                 self.handle_asset(query, head_only)
             else:
                 self.send_json(404, {"error": "未知接口"}, head_only)
+        except DoubanBlocked as exc:
+            # 风控不是网站故障：200 + unavailable，前端显示「豆瓣限流，稍后重试」
+            # 与重试按钮，而不是「加载失败：HTTP 502」。
+            self.send_json(200, {
+                "items": [],
+                "hasMore": False,
+                "unavailable": str(exc),
+                "retryAfter": max(1, exc.retry_after // 60),
+                "cooldown": cooldown_remaining(),
+            }, head_only)
         except ValueError as exc:
             self.send_json(400, {"error": str(exc)}, head_only)
         except urllib.error.HTTPError as exc:
-            message = "豆瓣返回 %d" % exc.code
-            if exc.code in (403, 418):
-                message += "（请求过于频繁，稍后再试）"
-            self.send_json(502, {"error": message}, head_only)
+            self.send_json(502, {"error": "豆瓣返回 %d" % exc.code}, head_only)
         except Exception as exc:  # noqa: BLE001 网络异常统一转成 502
             self.send_json(502, {"error": "豆瓣请求失败：%s" % exc}, head_only)
 

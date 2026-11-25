@@ -96,7 +96,11 @@ window.MovieSource = (function () {
   function memoJSON(path) {
     const hit = memo.get(path);
     if (hit && Date.now() - hit.at < MEMO_TTL) return hit.promise;
-    const promise = getJSON(path);
+    const promise = getJSON(path).then(function (data) {
+      // 豆瓣限流时的空结果不留在内存里，否则「重试」会一直拿到同一份空数据。
+      if (data && data.unavailable) memo.delete(path);
+      return data;
+    });
     memo.set(path, { at: Date.now(), promise: promise });
     promise.catch(function () { memo.delete(path); });
     return promise;

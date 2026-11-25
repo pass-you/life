@@ -2692,6 +2692,52 @@ body.modal-open {
   color: var(--accent-ink);
 }
 
+.movie-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.movie-shuffle {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 13px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--muted);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: color 0.16s ease, background 0.16s ease, border-color 0.16s ease;
+}
+
+.movie-shuffle:hover {
+  border-color: var(--accent-line);
+  background: var(--accent-ghost);
+  color: var(--accent-ink);
+}
+
+.movie-shuffle svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.movie-shuffle[hidden] {
+  display: none;
+}
+
+.movie-hint {
+  margin-top: 14px;
+}
+
 .movie-count {
   margin: 10px 0;
   font-size: 11.5px;
