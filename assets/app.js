@@ -2916,44 +2916,79 @@
         const score = movie.rating ? movie.rating.toFixed(1) : '';
         const votes = movie.votes ? movie.votes.toLocaleString('zh-CN') + ' 人评分' : '';
         const tags = (movie.genres || []).join(' · ');
+        const backdrop = movie.backdrop || movie.cover || '';
+        // 评分环按 10 分制折算，弧长与 dashoffset 在 JS 里算好，避免 CSS calc 的兼容问题。
+        const ringCirc = 2 * Math.PI * 20.5;
+        const ringOffset = (ringCirc * (1 - Math.min(10, Math.max(0, movie.rating || 0)) / 10))
+          .toFixed(2);
+        const chips = function (names) {
+          return names.map(function (name) {
+            return '<span class="credit-chip">' + esc(name) + '</span>';
+          }).join('');
+        };
         detailBody.innerHTML =
-          '<div class="movie-fiche">' +
-          (movie.backdrop
-            ? '<div class="fiche-backdrop" style="background-image:url(' +
-              esc(movie.backdrop) + ')" aria-hidden="true"></div>'
+          '<article class="movie-fiche">' +
+          '<header class="fiche-hero">' +
+          (backdrop
+            ? '<div class="fiche-shot" style="background-image:url(' +
+              esc(backdrop) + ')" aria-hidden="true"></div>'
             : '') +
-          '<div class="fiche-head">' +
+          '<div class="fiche-veil" aria-hidden="true"></div>' +
+          '<div class="fiche-hero-main">' +
+          '<div class="fiche-posterbox">' +
           (movie.cover
-            ? '<img class="fiche-poster" src="' + esc(movie.cover) + '" alt="" decoding="async">'
-            : '') +
+            ? '<img class="fiche-poster" src="' + esc(movie.cover) + '" alt="《' +
+              esc(movie.title) + '》海报" decoding="async">'
+            : '<div class="fiche-poster is-plain">' + esc(movie.title.slice(0, 4)) + '</div>') +
+          '</div>' +
           '<div class="fiche-info">' +
           '<h2 class="fiche-title">' + esc(movie.title) + '</h2>' +
           (movie.originalTitle && movie.originalTitle !== movie.title
             ? '<p class="fiche-original">' + esc(movie.originalTitle) + '</p>' : '') +
           '<p class="fiche-meta">' + esc(metaLine([movie.year, runtime, movie.region])) + '</p>' +
+          (tags ? '<p class="fiche-genres">' + esc(tags) + '</p>' : '') +
+          '<div class="fiche-foot">' +
           (score
-            ? '<p class="fiche-score"><b>' + esc(score) + '</b><span>' +
-              esc(votes || '评分') + '</span></p>' : '') +
-          (tags ? '<p class="fiche-tags">' + esc(tags) + '</p>' : '') +
-          '<div class="movie-marks">' + markButton('wish', movie, '想看') +
+            ? '<div class="fiche-score">' +
+              '<span class="score-ring" role="img" aria-label="评分 ' + esc(score) + ' 分，满分 10 分">' +
+              '<svg viewBox="0 0 48 48" aria-hidden="true">' +
+              '<circle class="ring-track" cx="24" cy="24" r="20.5"/>' +
+              '<circle class="ring-fill" cx="24" cy="24" r="20.5" stroke-dasharray="' +
+              ringCirc.toFixed(2) + '" stroke-dashoffset="' + ringOffset + '"/>' +
+              '</svg><b>' + esc(score) + '<small>/10</small></b></span>' +
+              '<span class="fiche-score-copy"><em>用户评分</em>' +
+              (votes ? '<small>' + esc(votes) + '</small>' : '') +
+              '</span>' +
+              '</div>'
+            : '') +
+          '<div class="movie-marks fiche-marks">' + markButton('wish', movie, '想看') +
           markButton('watched', movie, '看过') + '</div>' +
-          '</div></div>' +
-          (movie.directors.length
-            ? '<p class="fiche-line"><span>导演</span>' + esc(movie.directors.join(' / ')) + '</p>'
-            : '') +
-          (movie.cast.length
-            ? '<p class="fiche-line"><span>主演</span>' + esc(movie.cast.join(' / ')) + '</p>'
-            : '') +
+          '</div></div></div></header>' +
+          '<div class="fiche-body">' +
+          '<section class="fiche-section">' +
+          '<h3 class="fiche-label">简介</h3>' +
           '<p class="fiche-overview">' +
-          esc(movie.overview || '这部片暂时没有简介。') + '</p>' +
-          '<div class="fiche-actions">' +
+          esc(movie.overview || '这部片暂时没有简介。') + '</p></section>' +
+          (movie.directors.length || movie.cast.length
+            ? '<section class="fiche-section">' +
+              '<h3 class="fiche-label">演职人员</h3><dl class="fiche-credits">' +
+              (movie.directors.length
+                ? '<div class="credit-row"><dt>导演</dt><dd>' +
+                  chips(movie.directors) + '</dd></div>' : '') +
+              (movie.cast.length
+                ? '<div class="credit-row"><dt>主演</dt><dd>' + chips(movie.cast) +
+                  '</dd></div>' : '') +
+              '</dl></section>'
+            : '') +
+          '<div class="fiche-links">' +
           '<a class="btn btn-sm" href="' + esc(MovieSource.doubanSearchUrl(movie.title)) +
           '" target="_blank" rel="noopener noreferrer">在豆瓣搜《' +
           esc(movie.title) + '》</a>' +
-          '<a class="btn btn-sm" href="' + esc(movie.external || MovieSource.pageUrl(movie.id)) +
+          '<a class="btn btn-sm btn-primary" href="' +
+          esc(movie.external || MovieSource.pageUrl(movie.id)) +
           '" target="_blank" rel="noopener noreferrer">' +
           (movie.provider === 'cinemeta' ? 'IMDb 条目' : 'TMDB 条目') + '</a>' +
-          '</div></div>';
+          '</div></div></article>';
       }).catch(function (error) {
         if (detail.hidden) return;
         detailBody.innerHTML = '<div class="detail-loading"><span>' +

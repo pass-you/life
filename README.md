@@ -132,7 +132,7 @@ python serve.py --host 0.0.0.0  # 允许局域网访问
 - 找电影**不再依赖** `serve.py`：片源直连 TMDB，所以页面放在 GitHub Pages 等远端 https 站点、或用 `file://` 直接打开时，找电影一样能用。
 - 不填 Key 也能用（Cinemeta 英文全量片库）。想要中文片名 / 简介，就填一次免费的 TMDB API Key：在 www.themoviedb.org 注册后进「设置 → API」，复制「API Key (v3 auth)」粘进弹层右上角的「Key」面板即可。Key 只存在浏览器 localStorage，换浏览器或清理站点数据后需要重填；Key 失效时会自动退回英文片库，不会变成死路。
 - **为什么换掉豆瓣**：豆瓣的匿名接口（`j/new_search_subjects`、`j/subject_suggest` 等）对本机 IP 连续请求后会一律 302 跳登录页——点两下「换一批」就再也拿不到数据，且没有可用的替代接口。实测过的替代：TMDB 的 `api.tmdb.org` 国内可直连（返回 401 而不是超时）、带 CORS 头、海报 CDN `image.tmdb.org` 可达，默认 50 次/秒，discover 可翻 500 页，是功能最全的一条（需免费 Key）；Cinemeta 的 `v3-cinemeta.strem.io` 免 Key、无注册、`skip` 到 5000 仍正常、海报 `images.metahub.space` 可达，代价是英文片名（默认源），但它的 `search=` 本身认中文别名（`search=盗梦空间` 就返回 `Inception`），所以中文检索在没有 Key 时也能换来英文条目；WMDB 实测 10 秒只能搜一次（429），iTunes 中国区电影库返回 0 条，都不足以支撑「换一批」。
-- 详情页改为 TMDB 的 JSON 本地渲染，不再内嵌第三方页面：断网或对方改版都不会白屏；「在豆瓣搜这部片」与「TMDB 条目」都是新窗口直达链接。
+- 详情页用片源 JSON 本地渲染，版式按 TMDB 条目页组织：背景图铺在顶端并渐隐到卡片底色，海报压在左侧，标题 / 年份 / 片长 / 地区 / 类型 / 评分环（10 分制弧长）/「想看 · 看过」一屏排开，下面接「简介」与「演职人员」，300 px 级窄屏自动收成单列。不再内嵌第三方页面，断网或对方改版都不会白屏；「在豆瓣搜这部片」与「TMDB 条目 / IMDb 条目」都是新窗口直达链接。
 
 ## 目录结构
 
