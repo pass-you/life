@@ -39,6 +39,11 @@
     { value: 'vote_count.desc', label: '评价人数' },
     { value: 'primary_release_date.desc', label: '最新上映' }
   ];
+  // 评分门槛：TMDB 用 vote_average.gte 服务端筛，Cinemeta / 搜索接口拿回后本地筛。
+  const MOVIE_RATINGS = ['全部', '9分以上', '8分以上', '7.5分以上', '7分以上', '6分以上'];
+  const RATING_MIN = {
+    '9分以上': 9, '8分以上': 8, '7.5分以上': 7.5, '7分以上': 7, '6分以上': 6
+  };
   // 「想看的电影」「看过的电影」在本地排序。
   const LIBRARY_SORTS = [
     { value: 'added', label: '收藏时间' },
@@ -2198,13 +2203,44 @@
 
   // 打开日页面时顺手把「找电影」的首屏拉进内存：用户点胶片按钮时列表已经就绪。
   // 整个会话只做一次，用空闲时段发起，不抢首屏渲染。
+  // 首屏只在「热门池」里随机取页：片库有几百页，翻到很深的页就全是冷门片，
+  // 前 25 页（每页 20 条）既够新鲜也够好看。页号记进 sessionStorage，
+  // 刷新页面也不会又落回同一页。
+  const MOVIE_START_PAGES = 25;
+  const MOVIE_START_KEY = 'life.movie.startPage';
+  let movieWarmPage = 0;
+
+  function randomStartPage() {
+    let last = 0;
+    try { last = Number(sessionStorage.getItem(MOVIE_START_KEY)) || 0; } catch (error) { last = 0; }
+    let page = Math.floor(Math.random() * MOVIE_START_PAGES) + 1;
+    // 撞上一次的首屏页就顺延一页，保证「每次进来都不一样」。
+    if (page === last) page = (page % MOVIE_START_PAGES) + 1;
+    try { sessionStorage.setItem(MOVIE_START_KEY, String(page)); } catch (error) { /* 隐私模式 */ }
+    return page;
+  }
+
+  // 预热过的那一页就是弹层首屏要显示的页；还没预热就临场随机。
+  function takeStartPage() {
+    if (movieWarmPage) {
+      const page = movieWarmPage;
+      movieWarmPage = 0;
+      return page;
+    }
+    return randomStartPage();
+  }
+
   let movieWarmed = false;
   function warmMovieLibrary() {
     if (movieWarmed) return;
     movieWarmed = true;
     const start = function () {
-      MovieSource.warm().then(function (ok) {
-        if (!ok) movieWarmed = false;
+      movieWarmPage = randomStartPage();
+      MovieSource.warm(movieWarmPage).then(function (ok) {
+        if (!ok) {
+          movieWarmed = false;
+          movieWarmPage = 0;
+        }
       });
     };
     if ('requestIdleCallback' in window) requestIdleCallback(start, { timeout: 2500 });
@@ -2224,7 +2260,8 @@
     if (document.querySelector('.expense-modal')) return;
     const node = dayNode(year, month, day, true);
     const filters = {
-      genre: '全部', region: '全部', decade: '全部', sort: 'popularity.desc', query: ''
+      genre: '全部', region: '全部', decade: '全部', rating: '全部',
+      sort: 'popularity.desc', query: ''
     };
     const feed = {
       online: null,
@@ -2312,6 +2349,7 @@
         country: filters.region === '全部' ? '' : filters.region,
         from: decade.from,
         to: decade.to,
+        minRating: RATING_MIN[filters.rating] || 0,
         sort: filters.sort,
         page: feed.page
       };
@@ -2597,7 +2635,9 @@
       chipRow('region', MOVIE_REGIONS, '全部') + '</div></div>' +
       '<div class="filter-row"><span class="filter-label">年代</span><div class="filter-chips">' +
       chipRow('decade', MOVIE_DECADES.map(function (item) { return item.label; }), '全部') +
-      '</div></div></div></div>' +
+      '</div></div>' +
+      '<div class="filter-row"><span class="filter-label">评分</span><div class="filter-chips">' +
+      chipRow('rating', MOVIE_RATINGS, '全部') + '</div></div></div></div>' +
       '<p class="movie-count" id="movie-count" role="status" aria-live="polite"></p>' +
       '<div class="movie-find" id="movie-find">' +
       '<div class="movie-grid" id="movie-grid"></div>' +
@@ -2847,7 +2887,7 @@
 
     function filtersActive() {
       return filters.genre !== '全部' || filters.region !== '全部' ||
-        filters.decade !== '全部' || !!filters.query.trim();
+        filters.decade !== '全部' || filters.rating !== '全部' || !!filters.query.trim();
     }
 
     // 清单在本地筛选：类型 / 地区 / 年代 / 关键词都是收藏时随 MD 一起保存的字段。
@@ -2864,6 +2904,8 @@
         }
         if (filters.genre !== '全部' && (item.genres || []).indexOf(filters.genre) < 0) return false;
         if (!regionMatches(item, filters.region)) return false;
+        const minRating = RATING_MIN[filters.rating] || 0;
+        if (minRating && !(Number(item.rating) >= minRating)) return false;
         if (decade.from) {
           const year = Number(item.year);
           if (!year || year < decade.from || year > decade.to) return false;
@@ -3054,6 +3096,8 @@
     function loadMore() {
       if (feed.loading || !feed.hasMore || feed.error || feed.unavailable) return;
       const token = feed.token;
+      const isFirst = !feed.items.length;
+      const requested = feed.page;
       feed.loading = true;
       renderStatus();
       fetchChunk(token, 4).then(function (result) {
@@ -3063,6 +3107,14 @@
           feed.unavailable = result.unavailable;
           clearSkeleton();
           renderStatus();
+          return;
+        }
+        // 首屏随机跳到的页可能超出当前筛选条件的真实页数（接口给空页），回落到第 1 页。
+        if (isFirst && !result.items.length && requested > 1) {
+          feed.page = 1;
+          feed.hasMore = true;
+          renderStatus();
+          loadMore();
           return;
         }
         feed.items = feed.items.concat(result.items);
@@ -3252,7 +3304,9 @@
     overlay.addEventListener('click', function (event) {
       const chip = event.target.closest('.filter-chip');
       if (chip) {
-        const type = chip.dataset.genre ? 'genre' : chip.dataset.region ? 'region' : 'decade';
+        const type = chip.dataset.genre ? 'genre'
+          : chip.dataset.region ? 'region'
+          : chip.dataset.decade ? 'decade' : 'rating';
         filters[type] = chip.textContent;
         const row = chip.parentNode;
         Array.prototype.forEach.call(row.children, function (item) {
@@ -3410,7 +3464,7 @@
       feed.online = available;
       updateSourceNote();
       if (available) {
-        resetFeed(1);
+        resetFeed(takeStartPage());
         repairLibrary(4);
       } else {
         renderStatus();

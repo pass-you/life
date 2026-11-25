@@ -288,6 +288,7 @@ window.MovieSource = (function () {
     params.include_adult = 'false';
     const genreId = (GENRES.filter(function (g) { return g.label === opts.genre; })[0] || {}).id;
     if (genreId) params.with_genres = genreId;
+    if (opts.minRating) params['vote_average.gte'] = opts.minRating;
     if (REGION_CODE[opts.country]) params.with_origin_country = REGION_CODE[opts.country];
     if (opts.from) params['primary_release_date.gte'] = opts.from + '-01-01';
     if (opts.to) params['primary_release_date.lte'] = opts.to + '-12-31';
@@ -322,6 +323,8 @@ window.MovieSource = (function () {
         .filter(function (item) {
           if (!item || !item.title) return false;
           if (opts.genre && item.genres.length && item.genres.indexOf(opts.genre) < 0) return false;
+          // search/movie 没有评分门槛参数，只能拿回结果后自己筛；无评分的条目不算达标。
+          if (opts.minRating && !(item.rating >= opts.minRating)) return false;
           if (opts.from && item.year && Number(item.year) < opts.from) return false;
           if (opts.to && item.year && Number(item.year) > opts.to) return false;
           return true;
@@ -450,6 +453,12 @@ window.MovieSource = (function () {
     return true;
   }
 
+  // Cinemeta 目录也不支持评分参数，列表拿回后按条目自带评分过滤。
+  function ratingMatches(item, opts) {
+    if (!opts.minRating) return true;
+    return (Number(item.rating) || 0) >= opts.minRating;
+  }
+
   function cineDiscover(opts) {
     const page = clampPage(opts.page, CINE_MAX_PAGE);
     return cineFetch(page, opts, 3);
@@ -467,7 +476,8 @@ window.MovieSource = (function () {
       const raw = payload && Array.isArray(payload.metas) ? payload.metas : [];
       const items = raw.map(normalizeCine).filter(Boolean);
       const visible = items.filter(function (item) {
-        return yearMatches(item, opts) && countryMatches(item, opts.country);
+        return yearMatches(item, opts) && countryMatches(item, opts.country) &&
+          ratingMatches(item, opts);
       });
       const hasMore = raw.length > 0 && page < CINE_MAX_PAGE;
       if (!visible.length && hasMore && tries > 1) {
@@ -585,7 +595,7 @@ window.MovieSource = (function () {
   function discover(options) {
     const opts = options || {};
     const cacheKey = [provider, 'discover', opts.genre, opts.country, opts.from, opts.to,
-      opts.sort, opts.page].join('|');
+      opts.minRating, opts.sort, opts.page].join('|');
     return memoJSON(cacheKey, function () {
       return provider === 'tmdb' ? tmdbDiscover(opts) : cineDiscover(opts);
     });
@@ -596,7 +606,7 @@ window.MovieSource = (function () {
     const keyword = String(opts.q || '').trim();
     if (!keyword) return discover(opts);
     const cacheKey = [provider, 'search', keyword, opts.genre, opts.country, opts.from,
-      opts.to, opts.page].join('|');
+      opts.to, opts.minRating, opts.page].join('|');
     return memoJSON(cacheKey, function () {
       if (provider === 'tmdb') return tmdbSearch(opts);
       return cineFetch(clampPage(opts.page, CINE_MAX_PAGE), opts, 3);
@@ -662,10 +672,12 @@ window.MovieSource = (function () {
     return online();
   }
 
-  function warm() {
+  // 预热一页：首屏会随机跳到某一页，预热的也必须是同一页才有意义，
+  // 所以由调用方把页号传进来（缺省第 1 页）。
+  function warm(page) {
     return online().then(function (ok) {
       if (!ok) return false;
-      return discover({ page: 1, sort: 'popularity.desc' })
+      return discover({ page: clampPage(page || 1), sort: 'popularity.desc' })
         .then(function () { return true; })
         .catch(function () { return false; });
     });
