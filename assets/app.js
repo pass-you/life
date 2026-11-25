@@ -2925,9 +2925,23 @@
       '</div><div class="movie-head-actions">' +
       '<div class="movie-source-switch" role="group" aria-label="选择片源">' +
       '<button type="button" class="movie-source-btn" data-src="tmdb" aria-pressed="false" ' +
-      'title="TMDB 中文片库（需要 API Key）">TMDB · 中文</button>' +
+      'aria-label="TMDB 中文片库（需要 API Key）" title="TMDB 中文片库（需要 API Key）">' +
+      '<svg class="source-logo source-logo-tmdb" viewBox="0 0 26 18" aria-hidden="true" focusable="false">' +
+      '<defs><linearGradient id="source-tmdb-grad" x1="0" y1="0" x2="1" y2="1">' +
+      '<stop offset="0" stop-color="#90cea1"/><stop offset="1" stop-color="#01b4e4"/>' +
+      '</linearGradient></defs>' +
+      '<rect x="0" y="0" width="26" height="18" rx="4" fill="url(#source-tmdb-grad)"/>' +
+      '<text x="13" y="12.4" text-anchor="middle" font-family="Helvetica,Arial,sans-serif" ' +
+      'font-size="7.6" font-weight="700" letter-spacing="-.2" fill="#0d253f">TMDB</text>' +
+      '</svg></button>' +
       '<button type="button" class="movie-source-btn" data-src="cinemeta" aria-pressed="false" ' +
-      'title="Cinemeta 英文片库（免 Key）">Cinemeta · 英文</button>' +
+      'aria-label="Cinemeta 英文片库（免 Key）" title="Cinemeta 英文片库（免 Key）">' +
+      '<svg class="source-logo source-logo-cine" viewBox="0 0 26 18" aria-hidden="true" focusable="false">' +
+      '<rect x="1.2" y="1.8" width="23.6" height="14.4" rx="3.4" fill="none" ' +
+      'stroke="currentColor" stroke-width="1.5"/>' +
+      '<path d="M6 1.8v14.4M20 1.8v14.4" stroke="currentColor" stroke-width="1.1" opacity=".45"/>' +
+      '<path d="M11 6.4l5 2.6-5 2.6z" fill="currentColor"/>' +
+      '</svg></button>' +
       '</div>' +
       '<button type="button" class="collection-entry" data-lib="wish" aria-pressed="false" ' +
       'aria-label="想看的电影"><span class="collection-text">想看的电影</span>' +
@@ -3048,11 +3062,23 @@
           sourceNote.textContent += ' · ' + state.error;
         }
       }
+      syncSourceButtons();
+    }
+
+    // 图标选中态、搜索框提示与 Key 面板一起反映当前片源。
+    // 独立成函数，是为了打开弹层时立刻点亮对应图标，不必等片源探测回来。
+    function syncSourceButtons() {
+      const state = MovieSource.state();
+      const tail = state.keyTail ? '（Key 末 ' + state.keyTail + '）' : '';
       Array.prototype.forEach.call(overlay.querySelectorAll('[data-src]'), function (button) {
         const on = button.dataset.src === state.provider;
         button.classList.toggle('is-active', on);
         button.setAttribute('aria-pressed', String(on));
-        if (button.dataset.src === 'tmdb' && state.hasKey) button.title = '已保存 Key' + tail;
+        if (button.dataset.src === 'tmdb') {
+          button.title = state.hasKey
+            ? 'TMDB 中文片库 · 已保存 Key' + tail
+            : 'TMDB 中文片库（需要 API Key）';
+        }
       });
       // Cinemeta 只能按英文片名搜；TMDB 的中文检索能命中更多字段。
       if (searchInput) {
@@ -3920,6 +3946,7 @@
     }
 
     applySortOptions();
+    syncSourceButtons();
     // 没有 Key 也能直接用（Cinemeta 英文片库），所以这里总是先探测再加载；
     // 只有两个源都失败时才把 Key 面板露出来。
     MovieSource.online().then(function (available) {
