@@ -772,19 +772,13 @@ window.MovieSource = (function () {
     return provider === 'cinemeta' ? CINE_MAX_PAGE : MAX_PAGE;
   }
 
-  // 首屏取页：先探第 1 页拿到片库真实页数，再在 1..totalPages 里随机。
-  // 范围取满整个片库而不是前若干页的热门池 —— 深页里评分不高但值得一看的冷门片
-  // 也有机会被推到首屏，觉得太冷门时用评分筛选收窄即可。
+  // 首屏取页：直接以片源硬上限为范围随机。这里刻意不探测第 1 页——
+  // 第 1 页每次都是同一批热门片，既然首屏再也不展示它，连预热请求也不发。
+  // TMDB 500 页 × 20 条、Cinemeta 200 页 × 50 条都是接口硬上限。
   function startPage() {
     return online().then(function (ok) {
       if (!ok) return { ok: false, totalPages: 0 };
-      return discover({ page: 1, sort: 'popularity.desc' }).then(function (first) {
-        const cap = maxPage();
-        const total = Math.max(1, Math.min(cap, Number(first && first.totalPages) || cap));
-        return { ok: true, totalPages: total };
-      }).catch(function () {
-        return { ok: false, totalPages: 0 };
-      });
+      return { ok: true, totalPages: maxPage() };
     });
   }
 

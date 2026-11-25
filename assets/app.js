@@ -2474,22 +2474,27 @@
     try { return Number(localStorage.getItem(MOVIE_START_KEY)) || 0; } catch (error) { return 0; }
   }
 
+  // 第 1 页是每次都会返回同一批热门片的热门池，首屏永远不取它：
+  // 只有片库真的只有一页时才不得不退回第 1 页。
   function randomStartPage(max) {
     const span = Math.max(1, Number(max) || MovieSource.maxPage());
-    let page = Math.floor(Math.random() * span) + 1;
+    const from = span >= 2 ? 2 : 1;
+    let page = from + Math.floor(Math.random() * (span - from + 1));
     // 撞上一次的首屏页就顺延一页，保证「每次进来都不一样」。
-    if (page === lastStartPage()) page = (page % span) + 1;
+    if (page === lastStartPage()) page = page >= span ? from : page + 1;
     try { localStorage.setItem(MOVIE_START_KEY, String(page)); } catch (error) { /* 隐私模式 */ }
     return page;
   }
 
   // 预热过的那一页就是弹层首屏要显示的页；还没预热就临场随机（按当前片源上限）。
+  // 预热页同样不接受第 1 页，避免首屏又落回热门池。
   function takeStartPage() {
-    if (movieWarmPage) {
+    if (movieWarmPage > 1) {
       const page = movieWarmPage;
       movieWarmPage = 0;
       return page;
     }
+    movieWarmPage = 0;
     return randomStartPage(0);
   }
 
@@ -2621,6 +2626,11 @@
         return Promise.resolve({ items: [], hasMore: false, offline: true });
       }
       const keyword = filters.query.trim();
+      // 最后一道防线：首页推荐（无关键词）不管从哪条路径进来，都不能请求第 1 页。
+      // 搜索是唯一允许从第 1 页开始的场景。
+      if (!keyword && feed.page <= 1) {
+        feed.page = pickFreshPage(feed.totalPages, true);
+      }
       const decade = MOVIE_DECADES.filter(function (item) { return item.label === filters.decade; })[0] || {};
       const payload = {
         q: keyword,
@@ -3562,13 +3572,13 @@
         feed.note = page.note || '';
         if (!visible.length && remaining > 0) {
           if (feed.hasMore) return fetchChunk(token, remaining - 1, used);
-          // 已经翻到片库末尾还是全被过滤：回绕到第 1 页补找一次，
-          // 避免「看过很多片之后首屏一片空白」。
-          if (!feed.wrapped && page.page !== 1) {
+          // 已经翻到片库末尾还是全被过滤：回绕到另一个随机深页补找，绝不回第 1 页，
+          // 同时避免「看过很多片之后首屏一片空白」。
+          if (!feed.wrapped) {
             feed.wrapped = true;
-            feed.page = 1;
+            feed.page = pickFreshPage(feed.totalPages, true);
             feed.hasMore = true;
-            return fetchChunk(token, remaining - 1, used);
+            if (feed.page > 1) return fetchChunk(token, remaining - 1, used);
           }
         }
         return { items: visible, hasMore: feed.hasMore };
@@ -3610,19 +3620,23 @@
     }
 
     // TMDB discover 每页 20 条、最多到第 500 页，换一批就在这个范围里随机跳页，
-    // 完全不需要付出任何"限流"代价。limit 必须来自当前筛选条件的真实页数，
-    // 否则带筛选时会随机到 404。
+    // 完全不需要付出任何"限流"代价。
+    // 第 1 页永远不参与随机：那里每次都是同一批热门片，用户已明确要求
+    // 任何情况下都不再出现第 1 页的内容。只有片库真的只剩一页时才退回。
     const usedPages = {};
-    function pickFreshPage(limit) {
-      const max = Math.max(1, Math.min(MovieSource.MAX_PAGE,
-        limit || feed.totalPages || MovieSource.MAX_PAGE));
+    function pickFreshPage(limit, excludeFirst) {
+      // limit 只来自当前这一次请求拿到的 totalPages。不能回落到 feed.totalPages：
+      // 搜索结果的页数（可能只有 1 页）一旦留在这里，就会把首页推荐又压回第 1 页。
+      const cap = Math.max(1, Math.min(MovieSource.maxPage(),
+        Number(limit) > 0 ? Number(limit) : MovieSource.maxPage()));
+      const from = excludeFirst && cap >= 2 ? 2 : 1;
       const candidates = [];
-      for (let page = 1; page <= max; page += 1) {
+      for (let page = from; page <= cap; page += 1) {
         if (!usedPages[page]) candidates.push(page);
       }
       if (!candidates.length) {
         Object.keys(usedPages).forEach(function (key) { delete usedPages[key]; });
-        for (let page = 1; page <= max; page += 1) candidates.push(page);
+        for (let page = from; page <= cap; page += 1) candidates.push(page);
       }
       const picked = candidates[Math.floor(Math.random() * candidates.length)];
       usedPages[picked] = true;
@@ -3652,15 +3666,16 @@
       function pull() {
         if (pages >= 10 || batch.length >= 8) return Promise.resolve();
         pages += 1;
-        // 第一次先取第 1 页，拿到当前筛选条件真实的页数；后面才在范围内随机跳页。
-        feed.page = limit ? pickFreshPage(limit) : 1;
+        // 换一批从随机深页取；第 1 页既不请求也不展示，页数上限取自片源硬上限，
+        // 拿到接口返回的真实页数后再收窄。
+        feed.page = pickFreshPage(limit, true);
         return requestPage().then(function (page) {
           if (token !== feed.token) return null;
           const items = (page && Array.isArray(page.items) ? page.items : [])
             .filter(function (item) { return item && item.id; });
           items.forEach(function (item) { feed.known[item.id] = item; });
           if (!limit) {
-            limit = Math.max(1, Math.min(MovieSource.MAX_PAGE,
+            limit = Math.max(1, Math.min(MovieSource.maxPage(),
               Number(page && page.totalPages) || 1));
           }
           feed.totalPages = page.totalPages || feed.totalPages;
@@ -3713,7 +3728,14 @@
     function resetFeed(page) {
       feed.token += 1;
       feed.items = [];
-      feed.page = Math.max(1, Number(page) || 1);
+      const keyword = filters.query.trim();
+      // 搜索才从第 1 页开始（搜索结果必须从最相关的看起）；
+      // 首页推荐与筛选流一律从随机深页开始，第 1 页那批热门片永远不展示。
+      // 显式传入的页号也强制不小于 2，任何调用方都改不回热门池。
+      const explicit = Number(page) > 0;
+      feed.page = keyword ? 1
+        : explicit ? Math.max(2, Number(page))
+        : pickFreshPage(feed.totalPages, true);
       feed.hasMore = true;
       feed.wrapped = false;
       feed.loading = false;
@@ -3818,7 +3840,8 @@
           if (!overlay.isConnected) return;
           feed.online = available;
           if (available) {
-            resetFeed(1);
+            // 重连后也从随机深页恢复，不再从第 1 页的热门池重新开始。
+            resetFeed();
           } else {
             start.disabled = false;
             start.textContent = '仍然连不上，再试一次';
