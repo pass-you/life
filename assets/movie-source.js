@@ -122,6 +122,17 @@ window.MovieSource = (function () {
     return base() + 'page?id=' + encodeURIComponent(id);
   }
 
+  // 悬停时先把条目页 HTML 灌进浏览器缓存，点击后 iframe 直接命中，不再等豆瓣。
+  const preloaded = {};
+  function preload(id) {
+    if (!id || preloaded[id]) return;
+    preloaded[id] = true;
+    online().then(function (ok) {
+      if (!ok) return;
+      fetch(pageUrl(id), { cache: 'force-cache' }).catch(function () {});
+    });
+  }
+
   return {
     online: online,
     retry: retry,
@@ -129,6 +140,7 @@ window.MovieSource = (function () {
     search: search,
     detail: detail,
     poster: poster,
-    pageUrl: pageUrl
+    pageUrl: pageUrl,
+    preload: preload
   };
 })();

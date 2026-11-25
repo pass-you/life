@@ -2299,11 +2299,16 @@
     // 豆瓣条目页在本地服务里代理后内嵌展示，资源与链接都走同源代理。
     function openDetail(id) {
       if (!id) return;
-      detailBody.innerHTML = '<iframe class="douban-frame" title="豆瓣电影条目" ' +
+      detailBody.innerHTML =
+        '<div class="detail-loading" aria-hidden="true">' +
+        '<span class="detail-spinner"></span><span>正在打开豆瓣条目…</span></div>' +
+        '<iframe class="douban-frame" title="豆瓣电影条目" ' +
         'src="' + esc(MovieSource.pageUrl(id)) + '" ' +
         'referrerpolicy="no-referrer" loading="eager"></iframe>';
       const frame = detailBody.querySelector('.douban-frame');
       frame.addEventListener('load', function () {
+        const loading = detailBody.querySelector('.detail-loading');
+        if (loading) loading.remove();
         sizeFrame();
         setTimeout(sizeFrame, 400);
         setTimeout(sizeFrame, 1200);
@@ -2490,8 +2495,8 @@
         countEl.textContent = '正在连接豆瓣片库…';
       } else if (feed.online !== true) {
         countEl.innerHTML = '<span class="movie-offline">找电影由本地 <code>serve.py</code> 提供：' +
-          '双击项目里的 <code>启动人生日历.bat</code>（macOS / Linux 运行 <code>python serve.py</code>），' +
-          '它会启动服务并自动打开日历。</span>' +
+          '双击项目里的 <code>启动人生日历.vbs</code>（不会弹命令行窗口；macOS / Linux 运行 ' +
+          '<code>python serve.py</code>），它会启动服务并自动打开日历。</span>' +
           '<button type="button" class="movie-retry" data-start>已启动，重新检测</button>';
       } else if (!feed.items.length) {
         countEl.textContent = feed.note || '没有符合条件的电影，换个筛选条件或关键词试试。';
@@ -2554,6 +2559,10 @@
         clearSkeleton();
         if (result.items.length) {
           grid.insertAdjacentHTML('beforeend', result.items.map(cardMarkup).join(''));
+          // 预先抓取最可能被点开的前两部，点开时就接近瞬开。
+          result.items.slice(0, 2).forEach(function (item) {
+            setTimeout(function () { MovieSource.preload(item.id); }, 600);
+          });
         }
         renderStatus();
       }).catch(function (error) {
@@ -2617,6 +2626,18 @@
     });
     closeButton.addEventListener('click', close);
     moreButton.addEventListener('click', loadMore);
+
+    // 悬停/聚焦就预取条目页，点击时 iframe 直接命中缓存。
+    let preloadTimer = 0;
+    function schedulePreload(target) {
+      const open = target && target.closest ? target.closest('[data-open]') : null;
+      if (!open) return;
+      const id = open.dataset.open;
+      clearTimeout(preloadTimer);
+      preloadTimer = setTimeout(function () { MovieSource.preload(id); }, 120);
+    }
+    overlay.addEventListener('pointerover', function (event) { schedulePreload(event.target); });
+    overlay.addEventListener('focusin', function (event) { schedulePreload(event.target); });
 
     overlay.addEventListener('click', function (event) {
       const chip = event.target.closest('.filter-chip');

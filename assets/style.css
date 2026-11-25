@@ -2981,6 +2981,42 @@ body.modal-open {
 .detail-body {
   flex: 1;
   padding: 0 14px 18px;
+  position: relative;
+}
+
+.detail-loading {
+  position: absolute;
+  top: 0;
+  left: 14px;
+  right: 14px;
+  height: 560px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  border-radius: 12px;
+  background: #fff;
+  color: var(--muted);
+  font-size: 13px;
+  pointer-events: none;
+}
+
+.detail-spinner {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  border: 2px solid var(--accent-line);
+  border-top-color: var(--accent);
+  animation: detailSpin 0.8s linear infinite;
+}
+
+@keyframes detailSpin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .detail-spinner { animation-duration: 2.4s; }
 }
 
 .douban-frame {

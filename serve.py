@@ -25,7 +25,9 @@
 from __future__ import annotations
 
 import argparse
+import gzip
 import hashlib
+import html
 import json
 import mimetypes
 import os
@@ -82,7 +84,7 @@ def running_instance(host: str, port: int) -> bool:
 
 
 class Throttle:
-    """串行化豆瓣请求，避免短时间内触发风控。"""
+    """串行化豆瓣接口请求，避免短时间内触发风控。"""
 
     def __init__(self, interval: float) -> None:
         self.interval = interval
@@ -97,13 +99,27 @@ class Throttle:
                 time.sleep(delay)
             self._last = time.monotonic()
 
+    def __enter__(self) -> "Throttle":
+        self.wait()
+        return self
 
+    def __exit__(self, *_exc: object) -> bool:
+        return False
+
+
+# 豆瓣的 JSON / 条目页接口才需要限速；海报和条目页里的静态资源走图片 CDN，
+# 共用一个 0.35 秒的串行队列会让一个条目页的 40 多个资源排到十几秒。
 THROTTLE = Throttle(0.35)
+MEDIA_SLOTS = threading.BoundedSemaphore(8)   # CDN 资源：并发 8，不限间隔
 
 
 def http_get(url: str, referer: str, accept: str = "*/*",
-             ua: str | None = None) -> tuple[bytes, str]:
-    """带重试的 GET，返回 (body, content_type)。"""
+             ua: str | None = None, lane: str = "api",
+             timeout: float = 15) -> tuple[bytes, str]:
+    """带重试的 GET，返回 (body, content_type)。
+
+    lane="api" 走限速队列（豆瓣接口），lane="media" 只限制并发（图片 CDN）。
+    """
     headers = {
         "User-Agent": ua or USER_AGENT,
         "Referer": referer,
@@ -112,11 +128,15 @@ def http_get(url: str, referer: str, accept: str = "*/*",
     }
     last_error: Exception | None = None
     for attempt in range(3):
-        THROTTLE.wait()
         request = urllib.request.Request(url, headers=headers)
         try:
-            with urllib.request.urlopen(request, timeout=15) as response:
-                return response.read(), response.headers.get("Content-Type", "")
+            if lane == "media":
+                with MEDIA_SLOTS:
+                    with urllib.request.urlopen(request, timeout=timeout) as response:
+                        return response.read(), response.headers.get("Content-Type", "")
+            with THROTTLE:
+                with urllib.request.urlopen(request, timeout=timeout) as response:
+                    return response.read(), response.headers.get("Content-Type", "")
         except urllib.error.HTTPError as exc:
             last_error = exc
             if exc.code in TRANSIENT_STATUS and attempt < 2:
@@ -410,6 +430,28 @@ def poster_allowed(url: str) -> bool:
 POSTER_MIRRORS = ("img1.doubanio.com", "img2.doubanio.com", "img3.doubanio.com")
 
 
+def sniff_image_type(body: bytes) -> str:
+    if body[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if body[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if body[:4] == b"RIFF" and body[8:12] == b"WEBP":
+        return "image/webp"
+    if body[:3] == b"GIF":
+        return "image/gif"
+    return "image/jpeg"
+
+
+# 记住哪些图片域名在反爬，后续请求直接跳过，不再每次都白等一次超时。
+DOWN_HOSTS: dict[str, float] = {}
+DOWN_TTL = 30 * 60
+
+
+def host_down(host: str) -> bool:
+    until = DOWN_HOSTS.get(host, 0)
+    return until > time.time()
+
+
 def fetch_poster(url: str) -> tuple[bytes, str] | None:
     """下载海报；豆瓣部分图片域名对非浏览器客户端返回反爬页面，换镜像域名重试。"""
     parsed = urllib.parse.urlparse(url)
@@ -417,14 +459,22 @@ def fetch_poster(url: str) -> tuple[bytes, str] | None:
     for host in POSTER_MIRRORS:
         if host != parsed.hostname:
             candidates.append(urllib.parse.urlunparse(parsed._replace(netloc=host)))
+    # 已知失效的域名排到最后，省掉一轮无谓的超时。
+    candidates.sort(key=lambda item: host_down(urllib.parse.urlparse(item).hostname or ""))
     for candidate in candidates:
+        host = urllib.parse.urlparse(candidate).hostname or ""
+        if host_down(host):
+            continue
         try:
-            body, content_type = http_get(candidate, "https://movie.douban.com/")
+            body, content_type = http_get(candidate, "https://movie.douban.com/",
+                                          lane="media", timeout=8)
         except Exception:  # noqa: BLE001 单个镜像失败就换下一个
+            DOWN_HOSTS[host] = time.time() + DOWN_TTL
             continue
         mime = content_type.split(";")[0].strip()
         if mime.startswith("image/") and 0 < len(body) <= POSTER_MAX_BYTES:
-            return body, mime
+            return body, sniff_image_type(body)
+        DOWN_HOSTS[host] = time.time() + DOWN_TTL
     return None
 
 
@@ -453,6 +503,8 @@ HEAD_RE = re.compile(r"<head[^>]*>", re.I)
 def asset_url(url: str, origin: str = "") -> str:
     # 页面里注入了 <base href="https://m.douban.com/…">，相对路径会被解析到豆瓣，
     # 所以内嵌页里的资源必须写成带本站 origin 的绝对地址。
+    # 原文里的 &amp; 必须还原成 &，否则带签名的图片地址会 403。
+    url = html.unescape(url)
     return origin + "/api/movie/asset?u=" + urllib.parse.quote(url, safe="")
 
 
@@ -559,12 +611,23 @@ class Handler(BaseHTTPRequestHandler):
     # ---------- 基础响应 ----------
 
     def send_bytes(self, status: int, body: bytes, content_type: str,
-                   cache_control: str = "no-store", head_only: bool = False) -> None:
+                   cache_control: str = "no-store", head_only: bool = False,
+                   compress: bool = False, extra: dict[str, str] | None = None) -> None:
+        encoding = ""
+        # 条目页 HTML 和 CSS 体积不小，压缩后首屏明显更快。
+        if compress and len(body) > 1024 and "gzip" in (self.headers.get("Accept-Encoding") or ""):
+            body = gzip.compress(body, 6)
+            encoding = "gzip"
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", cache_control)
         self.send_header("X-Content-Type-Options", "nosniff")
+        if encoding:
+            self.send_header("Content-Encoding", encoding)
+            self.send_header("Vary", "Accept-Encoding")
+        for name, value in (extra or {}).items():
+            self.send_header(name, value)
         origin = getattr(self, "cors", "")
         if origin:
             # 页面由 file:// 或别的本地端口打开时，找电影也能直连这个服务。
@@ -576,7 +639,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def send_json(self, status: int, payload: object, head_only: bool = False) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        self.send_bytes(status, body, "application/json; charset=utf-8", "no-store", head_only)
+        self.send_bytes(status, body, "application/json; charset=utf-8", "no-store",
+                        head_only, compress=True)
 
     # ---------- 路由 ----------
 
@@ -613,6 +677,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.handle_poster(query, head_only)
             elif action == "page":
                 self.handle_page(query, head_only)
+            elif action == "stop":
+                self.handle_stop(head_only)
             elif action == "asset":
                 self.handle_asset(query, head_only)
             else:
@@ -635,7 +701,8 @@ class Handler(BaseHTTPRequestHandler):
         path = cache_path("posters", url)
         if path.is_file():
             body = path.read_bytes()
-            self.send_bytes(200, body, "image/jpeg", "public, max-age=604800, immutable", head_only)
+            self.send_bytes(200, body, sniff_image_type(body),
+                            "public, max-age=604800, immutable", head_only)
             return
         fetched = fetch_poster(url)
         if not fetched:
@@ -664,11 +731,22 @@ class Handler(BaseHTTPRequestHandler):
             html = page_error_html(subject_id, "豆瓣返回 %d。" % exc.code)
         except Exception as exc:  # noqa: BLE001 页面打不开时给出可点击的兜底
             html = page_error_html(subject_id, "原因：%s" % exc)
+        # 页面内资源已经是本站绝对地址，同一端口下可以让浏览器缓存几分钟，
+        # 再次点开同一部电影时直接命中缓存，不用重新请求。
         self.send_bytes(200, html.encode("utf-8"), "text/html; charset=utf-8",
-                        "no-store", head_only)
+                        "private, max-age=300", head_only, compress=True)
+
+    def handle_stop(self, head_only: bool) -> None:
+        """无控制台启动（pythonw）时，用这个接口优雅停掉本地服务。"""
+        remote = self.client_address[0] if self.client_address else ""
+        if remote not in ("127.0.0.1", "::1", "::ffff:127.0.0.1"):
+            self.send_json(403, {"error": "只允许本机停止服务"}, head_only)
+            return
+        self.send_json(200, {"ok": True, "stopping": True}, head_only)
+        threading.Timer(0.2, shutdown_server).start()
 
     def handle_asset(self, query: dict[str, list[str]], head_only: bool) -> None:
-        url = (query.get("u") or [""])[0]
+        url = html.unescape((query.get("u") or [""])[0])
         if not asset_allowed(url):
             self.send_json(400, {"error": "只允许代理豆瓣静态资源"}, head_only)
             return
@@ -680,7 +758,8 @@ class Handler(BaseHTTPRequestHandler):
                 body = path.read_bytes()
             else:
                 fetched, header_type = http_get(
-                    url, MOBILE_REFERER, accept="*/*", ua=MOBILE_UA)
+                    url, MOBILE_REFERER, accept="*/*", ua=MOBILE_UA,
+                    lane="media", timeout=10)
                 if len(fetched) > ASSET_MAX_BYTES:
                     raise ValueError("资源过大")
                 body = fetched
@@ -695,12 +774,13 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:  # noqa: BLE001 单个资源失败不影响整页
             self.send_json(502, {"error": "资源加载失败：%s" % exc}, head_only)
             return
-        if "css" in content_type or url.lower().split("?")[0].endswith(".css"):
+        is_css = "css" in content_type or url.lower().split("?")[0].endswith(".css")
+        if is_css:
             css = rewrite_css(body.decode("utf-8", "replace"), url)
             body = css.encode("utf-8")
             content_type = "text/css; charset=utf-8"
         self.send_bytes(200, body, content_type or "application/octet-stream",
-                        "public, max-age=86400", head_only)
+                        "public, max-age=86400", head_only, compress=is_css)
 
     def handle_static(self, path: str, head_only: bool) -> None:
         if path == "/":
@@ -733,10 +813,23 @@ class Handler(BaseHTTPRequestHandler):
             cache_control = "public, max-age=86400"
         try:
             body = target.read_bytes()
+            stat = target.stat()
         except OSError:
             self.send_json(404, {"error": "not found"}, head_only)
             return
-        self.send_bytes(200, body, content_type, cache_control, head_only)
+        # 浏览器刷新时用 ETag 换 304，不必重新下载 vditor 等大文件。
+        etag = '"%x-%x"' % (int(stat.st_mtime * 1000), stat.st_size)
+        if (self.headers.get("If-None-Match") or "").strip() == etag:
+            self.send_response(304)
+            self.send_header("ETag", etag)
+            self.send_header("Cache-Control", cache_control)
+            self.send_header("Vary", "Accept-Encoding")
+            self.end_headers()
+            return
+        compressible = content_type.startswith("text/") or content_type in (
+            "application/javascript", "image/svg+xml")
+        self.send_bytes(200, body, content_type, cache_control, head_only,
+                        compress=compressible, extra={"ETag": etag})
 
 
 class LocalServer(ThreadingHTTPServer):
@@ -750,6 +843,31 @@ class LocalServer(ThreadingHTTPServer):
         super().server_bind()
 
 
+SERVER: ThreadingHTTPServer | None = None
+LOG_DIR = BASE_DIR / ".run"
+
+
+def setup_stdio() -> None:
+    """pythonw.exe 没有控制台：sys.stdout / sys.stderr 可能是 None，print 会直接抛错。"""
+    if sys.stdout is not None and sys.stderr is not None:
+        return
+    try:
+        LOG_DIR.mkdir(exist_ok=True)
+        stream = open(LOG_DIR / "serve.log", "a", encoding="utf-8", buffering=1)
+    except OSError:
+        stream = open(os.devnull, "w", encoding="utf-8")
+    if sys.stdout is None:
+        sys.stdout = stream
+    if sys.stderr is None:
+        sys.stderr = stream
+
+
+def shutdown_server() -> None:
+    server = SERVER
+    if server is not None:
+        server.shutdown()
+
+
 def open_browser(address: str) -> None:
     try:
         webbrowser.open(address)
@@ -758,6 +876,8 @@ def open_browser(address: str) -> None:
 
 
 def main() -> int:
+    setup_stdio()
+    global SERVER
     parser = argparse.ArgumentParser(description="人生日历本地服务：静态站点 + 豆瓣电影代理")
     parser.add_argument("--host", default="127.0.0.1", help="监听地址，默认 127.0.0.1")
     parser.add_argument("--port", type=int, default=8765, help="端口，默认 8765")
@@ -778,6 +898,7 @@ def main() -> int:
         sys.stderr.write("端口 %d 无法使用：%s\n" % (args.port, exc))
         return 1
     server.daemon_threads = True
+    SERVER = server
     print("人生日历已启动：%s" % address)
     print("找电影使用豆瓣电影片库（%s/api/movie/），海报会缓存在 .cache/。" % address.rstrip("/"))
     print("按 Ctrl+C 停止。")
