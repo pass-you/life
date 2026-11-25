@@ -2506,6 +2506,44 @@ body.modal-open {
   padding-top: 2px;
 }
 
+.movie-source-switch {
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+}
+
+.movie-source-btn {
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.18s ease, color 0.18s ease;
+}
+
+.movie-source-btn:hover {
+  color: var(--accent-ink);
+}
+
+.movie-source-btn.is-active {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
+.movie-source-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 .movie-head h2 {
   margin: 4px 0 3px;
   font-family: var(--font-serif);
@@ -2774,7 +2812,7 @@ body.modal-open {
 }
 
 .movie-poster-fallback {
-  display: flex;
+  display: none;
   align-items: center;
   justify-content: center;
   height: 100%;
@@ -2784,6 +2822,15 @@ body.modal-open {
   font-size: 17px;
   line-height: 1.3;
   text-align: center;
+}
+
+.movie-poster.is-plain .movie-poster-fallback,
+.movie-poster.is-broken .movie-poster-fallback {
+  display: flex;
+}
+
+.movie-poster.is-broken .movie-poster-img {
+  display: none;
 }
 
 .movie-poster img {
@@ -3129,6 +3176,11 @@ body.modal-open {
   background: var(--accent-ghost);
 }
 
+.movie-keypanel:focus-visible {
+  outline: 2px solid var(--accent-line);
+  outline-offset: 2px;
+}
+
 .movie-keytitle {
   margin: 0 0 4px;
   font-size: 13px;
@@ -3344,6 +3396,15 @@ body.modal-open {
 
   .movie-head-actions {
     gap: 6px;
+  }
+
+  .movie-source-switch {
+    padding: 2px;
+  }
+
+  .movie-source-btn {
+    padding: 5px 8px;
+    font-size: 11px;
   }
 
   .movie-head-actions .collection-text {

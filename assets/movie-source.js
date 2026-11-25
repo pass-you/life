@@ -20,6 +20,7 @@ window.MovieSource = (function () {
   const CINEMETA = 'https://v3-cinemeta.strem.io/';
   const IMDB = 'https://www.imdb.com/title/';
   const KEY_STORE = 'life.movie.tmdbKey';
+  const SOURCE_STORE = 'life.movie.source';
   const MEMO_TTL = 5 * 60 * 1000;
   const MAX_PAGE = 500;
   const CINE_PAGE = 50;
@@ -95,10 +96,13 @@ window.MovieSource = (function () {
   };
 
   let key = readKey();
+  let preferred = readSource();
   let probing = null;
   let healthy = null;
   let lastError = '';
-  let provider = key ? 'tmdb' : 'cinemeta';
+  let provider = preferred === 'cinemeta' || (preferred !== 'tmdb' && !key)
+    ? 'cinemeta'
+    : 'tmdb';
 
   function readKey() {
     try {
@@ -106,6 +110,33 @@ window.MovieSource = (function () {
     } catch (error) {
       return '';
     }
+  }
+
+  function readSource() {
+    try {
+      const value = String(localStorage.getItem(SOURCE_STORE) || '').trim();
+      return value === 'tmdb' || value === 'cinemeta' ? value : '';
+    } catch (error) {
+      return '';
+    }
+  }
+
+  function saveSource(value) {
+    preferred = value === 'tmdb' || value === 'cinemeta' ? value : '';
+    try {
+      if (preferred) localStorage.setItem(SOURCE_STORE, preferred);
+      else localStorage.removeItem(SOURCE_STORE);
+    } catch (error) {
+      /* 隐私模式下写不进去，当前会话仍然有效 */
+    }
+  }
+
+  function resetCaches() {
+    probing = null;
+    healthy = null;
+    lastError = '';
+    memo.clear();
+    Object.keys(preloaded).forEach(function (id) { delete preloaded[id]; });
   }
 
   function setKey(value) {
@@ -117,12 +148,18 @@ window.MovieSource = (function () {
       /* 隐私模式下写不进去，当前会话仍然可用 */
     }
     provider = key ? 'tmdb' : 'cinemeta';
-    probing = null;
-    healthy = null;
-    lastError = '';
-    memo.clear();
-    Object.keys(preloaded).forEach(function (id) { delete preloaded[id]; });
+    saveSource(provider);
+    resetCaches();
     return key;
+  }
+
+  // 用户在界面上直接选片源：TMDB 需要 Key，没有 Key 时保持原片源不动。
+  function setProvider(name) {
+    if (name === 'tmdb' && !key) return false;
+    provider = name === 'tmdb' ? 'tmdb' : 'cinemeta';
+    saveSource(provider);
+    resetCaches();
+    return true;
   }
 
   function hasKey() {
@@ -134,6 +171,7 @@ window.MovieSource = (function () {
       provider: provider,
       source: provider === 'tmdb' ? 'TMDB 中文库' : '英文片库（免 Key）',
       hasKey: !!key,
+      keyTail: key ? key.slice(-4) : '',
       healthy: healthy,
       error: lastError
     };
@@ -334,10 +372,14 @@ window.MovieSource = (function () {
   /* ---------------- Cinemeta（免 Key） ---------------- */
 
   function cineUrl(catalog, opts) {
+    // Cinemeta 的额外参数是同一个路径段里的 & 连接（genre=Drama&skip=100）。
+    // 拆成两个 / 段时它只认第一个，skip 会被丢掉，翻页/换一批就会一直拿到第 1 页。
+    const extra = [];
+    if (opts.genre) extra.push('genre=' + encodeURIComponent(opts.genre));
+    if (opts.search) extra.push('search=' + encodeURIComponent(opts.search));
+    if (opts.skip) extra.push('skip=' + opts.skip);
     const parts = ['catalog', 'movie', catalog];
-    if (opts.genre) parts.push('genre=' + encodeURIComponent(opts.genre));
-    if (opts.search) parts.push('search=' + encodeURIComponent(opts.search));
-    if (opts.skip) parts.push('skip=' + opts.skip);
+    if (extra.length) parts.push(extra.join('&'));
     return CINEMETA + parts.join('/') + '.json';
   }
 
@@ -438,6 +480,18 @@ window.MovieSource = (function () {
         totalPages: CINE_MAX_PAGE,
         hasMore: hasMore
       };
+    }).catch(function (error) {
+      // 片库实际深度比页数上限浅，翻过头会 404：当成「没有更多」处理，别让整批加载失败。
+      if (error && /HTTP 404/.test(error.message)) {
+        return {
+          provider: 'cinemeta',
+          items: [],
+          page: page,
+          totalPages: CINE_MAX_PAGE,
+          hasMore: false
+        };
+      }
+      throw error;
     });
   }
 
@@ -467,6 +521,52 @@ window.MovieSource = (function () {
           external: IMDB + encodeURIComponent(raw.imdb_id || id) + '/'
         };
       });
+  }
+
+  /* ---------------- 按片名回查（修复旧收藏） ---------------- */
+
+  // 旧版豆瓣收藏存的是豆瓣 id 与 doubanio 海报（外站引用会被 403），
+  // 这两样东西现在的片源都用不了。按片名 + 年份回查一次，换成当前片源可用的条目。
+  function pickMatch(items, title, year) {
+    const wanted = String(title || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    const scored = (items || []).filter(function (item) {
+      return item && item.id && item.title;
+    }).map(function (item) {
+      const name = item.title.toLowerCase();
+      let score = 0;
+      if (name === wanted) score += 6;
+      else if (name.indexOf(wanted) >= 0 || wanted.indexOf(name) >= 0) score += 3;
+      if (year && item.year === year) score += 5;
+      else if (year && item.year && Math.abs(Number(item.year) - Number(year)) <= 1) score += 2;
+      return { item: item, score: score };
+    }).sort(function (a, b) { return b.score - a.score; });
+    return scored.length && scored[0].score > 0 ? scored[0].item : null;
+  }
+
+  function lookup(title, year) {
+    const name = String(title || '').trim();
+    if (!name) return Promise.resolve(null);
+    const wantYear = /^\d{4}$/.test(String(year || '')) ? String(year) : '';
+    if (key) {
+      const params = { query: name, page: 1, include_adult: 'false' };
+      if (wantYear) params.year = wantYear;
+      return request(tmdbUrl('search/movie', params)).then(function (payload) {
+        const items = (payload && Array.isArray(payload.results) ? payload.results : [])
+          .map(normalizeTmdb).filter(Boolean);
+        return pickMatch(items, name, wantYear);
+      }).catch(function () {
+        return cineLookup(name, wantYear);
+      });
+    }
+    return cineLookup(name, wantYear);
+  }
+
+  function cineLookup(name, wantYear) {
+    return cineRequest(cineUrl('top', { search: name })).then(function (payload) {
+      const items = (payload && Array.isArray(payload.metas) ? payload.metas : [])
+        .map(normalizeCine).filter(Boolean);
+      return pickMatch(items, name, wantYear);
+    });
   }
 
   /* ---------------- 统一入口 ---------------- */
@@ -595,6 +695,7 @@ window.MovieSource = (function () {
     discover: discover,
     search: search,
     detail: detail,
+    lookup: lookup,
     poster: function (value) { return value && /^https?:\/\//.test(value) ? value : tmdbImage(value, 'w342'); },
     pageUrl: pageUrl,
     doubanSearchUrl: doubanSearchUrl,

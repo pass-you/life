@@ -2230,6 +2230,7 @@
       online: null,
       items: [],
       known: {},
+      shown: {},
       page: 1,
       totalPages: 0,
       hasMore: true,
@@ -2244,6 +2245,21 @@
     function savedIds() {
       return collectionList('wish').concat(collectionList('watched'))
         .map(function (item) { return item.id; }).filter(Boolean);
+    }
+
+    // 旧版豆瓣片源存下来的海报（doubanio）现在会被对方站点按外链 403，
+    // 豆瓣 id 新的两套片源也都用不了，需要按片名回查一次替换掉。
+    const LEGACY_POSTER = /(^|\/\/)[^/]*douban(?:io)?\.com\//i;
+    const repairTried = {};
+    let repairing = false;
+
+    function legacyPoster(item) {
+      if (!item) return true;
+      return !item.cover || LEGACY_POSTER.test(item.cover);
+    }
+
+    function repairKeyOf(item) {
+      return [item.title, item.year, item.cover].join('|');
     }
 
     function isIn(kind, id) {
@@ -2352,6 +2368,70 @@
       });
     }
 
+    // 用片名 + 年份把旧收藏里的豆瓣条目换成当前片源可用的条目，
+    // 保留用户自己写的片名与收藏日期。
+    function applyRepair(entry, match) {
+      const before = entry.id + '|' + entry.cover;
+      if (match.id) entry.id = match.id;
+      entry.cover = match.cover;
+      if (match.year) entry.year = match.year;
+      if (match.rating) entry.rating = match.rating;
+      if (match.genres && match.genres.length) {
+        entry.genres = normalizeTagList(match.genres, 4);
+      }
+      return before !== entry.id + '|' + entry.cover;
+    }
+
+    function repairLibrary(size) {
+      if (repairing || feed.online !== true) return;
+      const batch = [];
+      collectionList('wish').concat(collectionList('watched')).forEach(function (entry) {
+        if (batch.length >= (size || 4)) return;
+        if (!legacyPoster(entry)) return;
+        const key = repairKeyOf(entry);
+        if (repairTried[key]) return;
+        const marked = batch.some(function (item) { return repairKeyOf(item) === key; });
+        if (marked) return;
+        batch.push(entry);
+      });
+      if (!batch.length) return;
+      repairing = true;
+      let changed = false;
+      const tasks = batch.map(function (entry) {
+        repairTried[repairKeyOf(entry)] = true;
+        return MovieSource.lookup(entry.title, entry.year).then(function (match) {
+          if (!match || !match.id || !match.cover) return;
+          if (applyRepair(entry, match)) changed = true;
+        }).catch(function () {
+          /* 单片失败不影响其它条目，下次打开清单再试 */
+        });
+      });
+      Promise.all(tasks).then(function () {
+        repairing = false;
+        if (!overlay.isConnected) return;
+        if (changed) {
+          markDirty();
+          renderLibraryButtons();
+          if (libraryKind) renderLibraryView();
+          refreshEntry();
+        }
+        // 还有没回查过的旧条目就接着来一批，避免一次几十个请求把接口压满。
+        const rest = collectionList('wish').concat(collectionList('watched')).some(function (entry) {
+          return legacyPoster(entry) && !repairTried[repairKeyOf(entry)];
+        });
+        if (rest && changed) setTimeout(function () { repairLibrary(size); }, 300);
+      });
+    }
+
+    // 海报真实地址 403/404 时把卡片换成文字底图，并按片名重新回查一次。
+    function posterFailed(id) {
+      const entry = findInCollection('wish', id) || findInCollection('watched', id);
+      if (!entry || !entry.cover) return;
+      entry.cover = '';
+      markDirty();
+      repairLibrary(2);
+    }
+
     function cardMarkup(movie) {
       const id = movie.id;
       const posterSrc = posterOf(movie);
@@ -2361,8 +2441,9 @@
         '<button type="button" class="movie-poster' + (posterSrc ? '' : ' is-plain') +
         '" data-open="' + esc(id) + '" data-title="' + esc(movie.title) + '" aria-label="查看《' + esc(movie.title) + '》的详情">' +
         (posterSrc
-          ? '<img src="' + esc(posterSrc) + '" alt="" loading="lazy" decoding="async">'
-          : '<span class="movie-poster-fallback">' + esc(movie.title.slice(0, 4)) + '</span>') +
+          ? '<img class="movie-poster-img" src="' + esc(posterSrc) + '" alt="" loading="lazy" decoding="async">'
+          : '') +
+        '<span class="movie-poster-fallback">' + esc(movie.title.slice(0, 4)) + '</span>' +
         (movie.rating ? '<span class="movie-score">' + movie.rating.toFixed(1) + '</span>' : '') +
         '</button>' +
         '<div class="movie-body"><h3 class="movie-name">' +
@@ -2464,25 +2545,32 @@
       '<h2 id="movie-title">今天想看点什么？</h2>' +
       '<p class="sub">' + year + ' 年 ' + month + ' 月 ' + day + ' 日 ·<span id="movie-source-note">正在连接片库…</span></p>' +
       '</div><div class="movie-head-actions">' +
+      '<div class="movie-source-switch" role="group" aria-label="选择片源">' +
+      '<button type="button" class="movie-source-btn" data-src="tmdb" aria-pressed="false">' +
+      'TMDB · 中文</button>' +
+      '<button type="button" class="movie-source-btn" data-src="cinemeta" aria-pressed="false">' +
+      '免 Key · 英文</button>' +
+      '</div>' +
       '<button type="button" class="collection-entry" data-lib="wish" aria-pressed="false" ' +
       'aria-label="想看的电影"><span class="collection-text">想看的电影</span>' +
       '<span class="collection-short">想看</span> <b data-lib-count="wish">0</b></button>' +
       '<button type="button" class="collection-entry" data-lib="watched" aria-pressed="false" ' +
       'aria-label="看过的电影"><span class="collection-text">看过的电影</span>' +
       '<span class="collection-short">看过</span> <b data-lib-count="watched">0</b></button>' +
-      '<button type="button" class="movie-key-open" id="movie-key-open" aria-label="片源设置">片源</button>' +
+      '<button type="button" class="movie-key-open" id="movie-key-open" aria-label="TMDB Key 设置">Key</button>' +
       '<button type="button" class="expense-close movie-close" aria-label="关闭找电影">×</button>' +
       '</div></div>' +
       '<div class="movie-scroll" id="movie-scroll">' +
-      '<div class="movie-keypanel" id="movie-keypanel" hidden>' +
-      '<p class="movie-keytitle">可选：用 TMDB Key 切到中文片库</p>' +
-      '<p class="movie-keytext">不填也能用——当前是免 Key 的英文全量片库。填一个免费的 TMDB ' +
+      '<div class="movie-keypanel" id="movie-keypanel" tabindex="-1" hidden>' +
+      '<p class="movie-keytitle" id="movie-key-title">可选：用 TMDB Key 切到中文片库</p>' +
+      '<p class="movie-keytext" id="movie-key-text">不填也能用——当前是免 Key 的英文全量片库。填一个免费的 TMDB ' +
       '<b>API Key (v3 auth)</b> 后，片名、简介、类型都会变成中文，筛选也更精确。' +
       'Key 只存在这台浏览器里，不会写进 MD 文件。</p>' +
       '<div class="movie-keyrow">' +
       '<input id="movie-key-input" type="text" spellcheck="false" autocomplete="off" ' +
       'aria-label="TMDB API Key" placeholder="粘贴 TMDB API Key">' +
-      '<button type="button" class="btn btn-sm btn-primary" id="movie-key-save">保存</button>' +
+      '<button type="button" class="btn btn-sm btn-primary" id="movie-key-save">保存并切换</button>' +
+      '<button type="button" class="btn btn-sm" id="movie-key-clear" hidden>清除 Key</button>' +
       '<a class="btn btn-sm" href="https://www.themoviedb.org/settings/api" target="_blank" ' +
       'rel="noopener noreferrer">去申请 Key</a>' +
       '</div>' +
@@ -2547,6 +2635,9 @@
     const keyInput = overlay.querySelector('#movie-key-input');
     const keyHint = overlay.querySelector('#movie-key-hint');
     const keyOpen = overlay.querySelector('#movie-key-open');
+    const keyTitle = overlay.querySelector('#movie-key-title');
+    const keyText = overlay.querySelector('#movie-key-text');
+    const keyClear = overlay.querySelector('#movie-key-clear');
     let libraryKind = null;
     renderLibraryButtons();
 
@@ -2563,13 +2654,46 @@
       });
     }
 
-    // 顶部小字显示当前用的是哪个源，用户能一眼看出片名为什么是英文。
+    // 顶部小字与分段按钮一起反映当前片源：用户随时能看见现在用的是哪一套，
+    // 已经保存的 Key 也不会再被当成「没填过」。
     function updateSourceNote() {
       const state = MovieSource.state();
-      if (!sourceNote) return;
-      sourceNote.textContent = state.provider === 'tmdb'
-        ? 'TMDB 中文库'
-        : '英文片库 · 可填 Key 换中文';
+      const tail = state.keyTail ? '（Key 末 ' + state.keyTail + '）' : '';
+      if (sourceNote) {
+        if (state.provider === 'tmdb') {
+          sourceNote.textContent = 'TMDB 中文库' + tail;
+        } else {
+          sourceNote.textContent = '免 Key 英文片库' +
+            (state.hasKey ? ' · 已保存 Key，可切回 TMDB' : ' · 可填 Key 换中文');
+        }
+        if (state.error && state.provider !== 'tmdb') {
+          sourceNote.textContent += ' · ' + state.error;
+        }
+      }
+      Array.prototype.forEach.call(overlay.querySelectorAll('[data-src]'), function (button) {
+        const on = button.dataset.src === state.provider;
+        button.classList.toggle('is-active', on);
+        button.setAttribute('aria-pressed', String(on));
+        if (button.dataset.src === 'tmdb' && state.hasKey) button.title = '已保存 Key' + tail;
+      });
+      renderKeyPanel();
+    }
+
+    function renderKeyPanel() {
+      const state = MovieSource.state();
+      keyClear.hidden = !state.hasKey;
+      keyTitle.textContent = state.hasKey ? 'TMDB Key 已保存' : '可选：用 TMDB Key 切到中文片库';
+      if (state.hasKey) {
+        keyText.innerHTML = '已保存 Key（末尾 <b>' + esc(state.keyTail) + '</b>），当前片源是 <b>' +
+          (state.provider === 'tmdb' ? 'TMDB 中文库' : '免 Key 英文片库') + '</b>。' +
+          '可以在上面的两个按钮之间随时切换；Key 只存在这台浏览器里，不会写进 MD 文件。';
+        keyInput.placeholder = '已保存（末尾 ' + state.keyTail + '），粘贴新 Key 可替换';
+      } else {
+        keyText.innerHTML = '不填也能用——当前是免 Key 的英文全量片库。填一个免费的 TMDB ' +
+          '<b>API Key (v3 auth)</b> 后，片名、简介、类型都会变成中文，筛选也更精确。' +
+          'Key 只存在这台浏览器里，不会写进 MD 文件。';
+        keyInput.placeholder = '粘贴 TMDB API Key（API Key (v3 auth)）';
+      }
     }
 
     // 片源只需要一个 API Key（可选）：填一次就存在浏览器里，
@@ -2578,11 +2702,14 @@
       keyPanel.hidden = !show;
       if (!show) return;
       keyHint.textContent = '';
-      keyInput.placeholder = MovieSource.hasKey()
-        ? '已保存，粘贴新 Key 可替换'
-        : '粘贴 TMDB API Key（API Key (v3 auth)）';
-      keyInput.focus();
-      keyInput.select();
+      renderKeyPanel();
+      if (MovieSource.hasKey()) {
+        // 已经有 Key 时不再把光标丢进输入框，避免看起来像「还让你重填」。
+        keyPanel.focus();
+      } else {
+        keyInput.focus();
+        keyInput.select();
+      }
     }
 
     function saveKey() {
@@ -2593,41 +2720,106 @@
         return;
       }
       MovieSource.setKey(value);
+      keyInput.value = '';
+      resetDiscovery();
       keyHint.textContent = '正在验证…';
       feed.online = null;
+      feed.error = '';
+      feed.unavailable = '';
+      updateSourceNote();
       renderStatus();
       MovieSource.online().then(function (ok) {
         if (!overlay.isConnected) return;
-        if (ok) {
-          keyHint.textContent = 'Key 有效，片库已就绪。';
+        updateSourceNote();
+        if (ok && MovieSource.provider() === 'tmdb') {
+          keyHint.textContent = 'Key 有效，已切到 TMDB 中文片库。';
           feed.online = true;
           keyPanel.hidden = true;
           resetFeed(1);
           return;
         }
-        keyHint.textContent = '没通过验证：' + (MovieSource.state().error || '网络异常') +
-          '。确认复制的是「API Key (v3 auth)」那一串。';
+        if (ok) {
+          // TMDB 不通、但免 Key 片库还能用：不要谎称 Key 验证通过。
+          keyHint.textContent = 'Key 没通过验证：' + (MovieSource.state().error || '网络异常') +
+            '。已继续使用免 Key 的英文片库，确认复制的是「API Key (v3 auth)」那一串。';
+          feed.online = true;
+          resetFeed(1);
+          return;
+        }
+        keyHint.textContent = '片源没连上：' + (MovieSource.state().error || '网络异常') +
+          '。检查网络后再试。';
         feed.online = false;
         renderStatus();
       });
     }
 
+    // 换片源等于换了一整座片库，之前看过哪些片子不再作为「已推荐」的依据。
+    function resetDiscovery() {
+      feed.shown = {};
+      Object.keys(usedPages).forEach(function (key) { delete usedPages[key]; });
+    }
+
+    function switchSource(name) {
+      if (name === 'tmdb' && !MovieSource.hasKey()) {
+        showKeyPanel(true);
+        keyHint.textContent = 'TMDB 中文片库需要 API Key；也可以先用免 Key 的英文片库。';
+        return false;
+      }
+      if (!MovieSource.setProvider(name)) return false;
+      resetDiscovery();
+      updateSourceNote();
+      feed.online = null;
+      feed.error = '';
+      feed.unavailable = '';
+      feed.note = '';
+      renderStatus();
+      MovieSource.online().then(function (ok) {
+        if (!overlay.isConnected) return;
+        feed.online = ok;
+        updateSourceNote();
+        if (ok) resetFeed(1);
+        else renderStatus();
+      });
+      return true;
+    }
+
     keyOpen.addEventListener('click', function () { showKeyPanel(keyPanel.hidden); });
     overlay.querySelector('#movie-key-save').addEventListener('click', saveKey);
+    keyClear.addEventListener('click', function () {
+      MovieSource.setKey('');
+      resetDiscovery();
+      keyHint.textContent = '已清除 Key，回到免 Key 的英文片库。';
+      feed.online = null;
+      updateSourceNote();
+      renderStatus();
+      MovieSource.online().then(function (ok) {
+        if (!overlay.isConnected) return;
+        feed.online = ok;
+        updateSourceNote();
+        if (ok) resetFeed(1);
+        else renderStatus();
+      });
+    });
     keyInput.addEventListener('keydown', function (event) {
       if (event.key !== 'Enter') return;
       event.preventDefault();
       saveKey();
     });
 
+    function libraryPoster(item) {
+      if (!item || !item.cover || LEGACY_POSTER.test(item.cover)) return '';
+      return MovieSource.poster(item.cover);
+    }
+
     function libraryCard(item) {
-      const posterSrc = posterOf(item);
+      const posterSrc = libraryPoster(item);
       return '<article class="movie-card">' +
         '<button type="button" class="movie-poster' + (posterSrc ? '' : ' is-plain') +
         '" data-open="' + esc(item.id) + '" data-title="' + esc(item.title) + '" aria-label="查看《' + esc(item.title) + '》的详情">' +
         (posterSrc
-          ? '<img src="' + esc(posterSrc) + '" alt="" loading="lazy" decoding="async">'
-          : '<span class="movie-poster-fallback">' + esc(item.title.slice(0, 4)) + '</span>') +
+          ? '<img class="movie-poster-img" src="' + esc(posterSrc) + '" alt="" loading="lazy" decoding="async">'
+          : '') +
+        '<span class="movie-poster-fallback">' + esc(item.title.slice(0, 4)) + '</span>' +
         (item.rating ? '<span class="movie-score">' + item.rating.toFixed(1) + '</span>' : '') +
         '</button>' +
         '<div class="movie-body"><h3 class="movie-name">' +
@@ -2796,16 +2988,13 @@
       } else if (feed.loading && !feed.items.length) {
         countEl.textContent = '正在加载片库…';
       } else if (feed.online === null) {
-        countEl.textContent = '正在连接 TMDB…';
+        countEl.textContent = '正在连接片库…';
       } else if (feed.online !== true) {
         countEl.innerHTML = sourceNotice();
       } else if (!feed.items.length) {
         countEl.textContent = feed.note || '没有符合条件的电影，换个筛选条件或关键词试试。';
       } else if (feed.note) {
         countEl.innerHTML = '<span class="movie-note">' + esc(feed.note) + '</span>';
-      } else if (autoSlice) {
-        countEl.innerHTML = '<span class="movie-note">随便逛逛：' + esc(filters.genre) + ' · ' +
-          esc(filters.decade) + '，点「全部」回到全库</span>';
       } else {
         countEl.hidden = true;
         countEl.innerHTML = '';
@@ -2850,6 +3039,7 @@
           used[item.id] = true;
           return true;
         });
+        visible.forEach(function (item) { feed.shown[item.id] = true; });
         feed.page = (page.page || feed.page) + 1;
         feed.totalPages = page.totalPages || 0;
         feed.hasMore = !!page.hasMore && items.length > 0;
@@ -2894,51 +3084,101 @@
     }
 
     // TMDB discover 每页 20 条、最多到第 500 页，换一批就在这个范围里随机跳页，
-    // 完全不需要付出任何"限流"代价。
+    // 完全不需要付出任何"限流"代价。limit 必须来自当前筛选条件的真实页数，
+    // 否则带筛选时会随机到 404。
     const usedPages = {};
-    function pickFreshPage() {
-      const limit = Math.min(MovieSource.MAX_PAGE, feed.totalPages || MovieSource.MAX_PAGE);
+    function pickFreshPage(limit) {
+      const max = Math.max(1, Math.min(MovieSource.MAX_PAGE,
+        limit || feed.totalPages || MovieSource.MAX_PAGE));
       const candidates = [];
-      for (let page = 1; page <= limit; page += 1) {
+      for (let page = 1; page <= max; page += 1) {
         if (!usedPages[page]) candidates.push(page);
       }
       if (!candidates.length) {
         Object.keys(usedPages).forEach(function (key) { delete usedPages[key]; });
-        for (let page = 1; page <= limit; page += 1) candidates.push(page);
+        for (let page = 1; page <= max; page += 1) candidates.push(page);
       }
       const picked = candidates[Math.floor(Math.random() * candidates.length)];
       usedPages[picked] = true;
       return picked;
     }
 
-    // 「全部」时每一批只在一个切片里，看久了永远是同一批热门片；
-    // 换一批就随机换一个「类型 × 年代」切片，一次覆盖的范围扩大几十倍。
-    let autoSlice = false;
+    // 换一批：绝不改动用户选的筛选条件，只在同一条件下随机翻页，
+    // 并且挑出这次会话里从没展示过的电影。
+    function shuffleFeed() {
+      if (feed.loading || feed.online !== true) return;
+      feed.token += 1;
+      const token = feed.token;
+      feed.items = [];
+      feed.error = '';
+      feed.unavailable = '';
+      feed.note = '';
+      feed.loading = true;
+      grid.innerHTML = '';
+      skeleton();
+      renderStatus();
+      scrollEl.scrollTop = 0;
 
-    function syncChips(type) {
-      Array.prototype.forEach.call(overlay.querySelectorAll('[data-' + type + ']'), function (item) {
-        const on = item.textContent === filters[type];
-        item.classList.toggle('is-active', on);
-        item.setAttribute('aria-pressed', String(on));
-      });
-    }
+      const skip = savedIds();
+      const batch = [];
+      let pages = 0;
+      let limit = 0;
 
-    function pickSlice() {
-      const genres = MOVIE_GENRES.filter(function (item) { return item !== '全部'; });
-      const decades = MOVIE_DECADES.filter(function (item) { return item.label !== '全部'; });
-      let genre = filters.genre;
-      let decade = filters.decade;
-      // 同一个切片连续出现时再抽一次，避免连点两下看到的还是同一批。
-      for (let i = 0; i < 12; i += 1) {
-        genre = genres[Math.floor(Math.random() * genres.length)];
-        decade = decades[Math.floor(Math.random() * decades.length)].label;
-        if (genre !== filters.genre || decade !== filters.decade) break;
+      function pull() {
+        if (pages >= 10 || batch.length >= 8) return Promise.resolve();
+        pages += 1;
+        // 第一次先取第 1 页，拿到当前筛选条件真实的页数；后面才在范围内随机跳页。
+        feed.page = limit ? pickFreshPage(limit) : 1;
+        return requestPage().then(function (page) {
+          if (token !== feed.token) return null;
+          const items = (page && Array.isArray(page.items) ? page.items : [])
+            .filter(function (item) { return item && item.id; });
+          items.forEach(function (item) { feed.known[item.id] = item; });
+          if (!limit) {
+            limit = Math.max(1, Math.min(MovieSource.MAX_PAGE,
+              Number(page && page.totalPages) || 1));
+          }
+          feed.totalPages = page.totalPages || feed.totalPages;
+          feed.hasMore = !!page.hasMore && items.length > 0;
+          feed.note = page.note || '';
+          const fresh = items.filter(function (item) {
+            return !feed.shown[item.id] && skip.indexOf(item.id) < 0;
+          });
+          fresh.forEach(function (item) {
+            feed.shown[item.id] = true;
+            batch.push(item);
+          });
+          // 这一页全是看过的就继续翻，直到凑够一批或没有更多页。
+          if (fresh.length < 6 && items.length && pages < 8) return pull();
+          return null;
+        }).catch(function (error) {
+          // 页数估计偏大时接口会给 404，换一页继续，不要直接把「换一批」判死。
+          if (pages < 12) return pull();
+          throw error;
+        });
       }
-      filters.genre = genre;
-      filters.decade = decade;
-      autoSlice = true;
-      syncChips('genre');
-      syncChips('decade');
+
+      pull().then(function () {
+        if (token !== feed.token) return;
+        feed.loading = false;
+        feed.items = batch;
+        clearSkeleton();
+        if (batch.length) {
+          grid.innerHTML = batch.map(cardMarkup).join('');
+          batch.slice(0, 2).forEach(function (item) {
+            setTimeout(function () { MovieSource.preload(item.id); }, 400);
+          });
+        } else {
+          feed.note = '当前筛选条件里能推荐的电影都看过了，换个筛选条件试试。';
+        }
+        renderStatus();
+      }).catch(function (error) {
+        if (token !== feed.token) return;
+        feed.loading = false;
+        clearSkeleton();
+        feed.error = '加载失败：' + (error && error.message ? error.message : '网络异常');
+        renderStatus();
+      });
     }
 
     function resetFeed(page) {
@@ -3014,7 +3254,6 @@
       if (chip) {
         const type = chip.dataset.genre ? 'genre' : chip.dataset.region ? 'region' : 'decade';
         filters[type] = chip.textContent;
-        autoSlice = false;
         const row = chip.parentNode;
         Array.prototype.forEach.call(row.children, function (item) {
           const on = item === chip;
@@ -3127,15 +3366,32 @@
 
     shuffleButton.addEventListener('click', function () {
       if (libraryKind) return;
-      // 用户自己挑过类型/年代就尊重他的选择；只有仍是「全部」或上一次是自动切片时才换切片。
-      const untouched = filters.genre === '全部' && filters.region === '全部' &&
-        filters.decade === '全部';
-      if (!filters.query.trim() && (untouched || autoSlice)) pickSlice();
-      resetFeed(pickFreshPage());
+      // 筛选条件永远由用户决定：这里只换电影，不动任何 chip。
+      shuffleFeed();
     });
 
     document.addEventListener('keydown', onKey);
     window.addEventListener('hashchange', close);
+
+    // 图片加载失败时不要留一片空白：隐藏破图、露出文字底图，并尝试按片名回查。
+    overlay.addEventListener('error', function (event) {
+      const img = event.target;
+      if (!img || img.tagName !== 'IMG') return;
+      img.classList.add('is-broken');
+      const poster = img.closest('.movie-poster');
+      if (poster) poster.classList.add('is-broken');
+      const mark = poster && poster.parentNode.querySelector('[data-mark]');
+      const id = mark ? mark.dataset.id : '';
+      if (id) posterFailed(id);
+    }, true);
+
+    // 顶部两个按钮就是片源开关：点哪个用哪个，选中状态一眼可见。
+    Array.prototype.forEach.call(overlay.querySelectorAll('[data-src]'), function (button) {
+      button.addEventListener('click', function () {
+        if (button.dataset.src === MovieSource.provider()) return;
+        switchSource(button.dataset.src);
+      });
+    });
 
     if ('IntersectionObserver' in window) {
       observer = new IntersectionObserver(function (entries) {
@@ -3155,6 +3411,7 @@
       updateSourceNote();
       if (available) {
         resetFeed(1);
+        repairLibrary(4);
       } else {
         renderStatus();
         showKeyPanel(true);
