@@ -2911,6 +2911,13 @@ body.modal-open {
   cursor: pointer;
 }
 
+/* 远端页面（GitHub Pages）里是一条直达本机日历的链接，外观与按钮一致。 */
+.movie-local {
+  display: inline-block;
+  text-decoration: none;
+  margin-left: 6px;
+}
+
 .movie-foot {
   display: flex;
   justify-content: center;

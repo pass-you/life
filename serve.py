@@ -63,9 +63,18 @@ LOCAL_ORIGIN = re.compile(r"^(?:null|https?://(?:localhost|127\.0\.0\.1|\[::1\])
 
 
 def cors_origin(origin: str) -> str:
-    """只把 /api/movie/ 开放给本机来源：file:// 打开时 Origin 为 null，也算本机。"""
+    """/api/movie/ 对任意来源回显 Origin。
+
+    日历既可能由本服务托管，也可能托管在 GitHub Pages 这类 https 站点上，
+    https 页面访问 http://127.0.0.1 时 Origin 是 `https://<user>.github.io`，
+    只有回显它页面才能读到数据。接口只代理豆瓣公开资料、不读任何本地数据，
+    所以放开来源的风险仅限于「别的网页也能借本机代理查豆瓣」；真正有副作用
+    的 /api/movie/stop 另有本机来源校验。
+    """
     origin = (origin or "").strip()
-    return origin if origin and LOCAL_ORIGIN.match(origin) else ""
+    if not origin or len(origin) > 200 or "\n" in origin or "\r" in origin:
+        return ""
+    return origin
 
 
 def health_url(host: str, port: int) -> str:
@@ -630,8 +639,11 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header(name, value)
         origin = getattr(self, "cors", "")
         if origin:
-            # 页面由 file:// 或别的本地端口打开时，找电影也能直连这个服务。
+            # 页面由 file://、别的本地端口或 GitHub Pages 打开时，找电影也能直连这个服务。
             self.send_header("Access-Control-Allow-Origin", origin)
+            # Chrome 的 Private Network Access：公网 https 页面请求 127.0.0.1 时，
+            # 预检和实际响应都要带这个头，否则请求被判失败。
+            self.send_header("Access-Control-Allow-Private-Network", "true")
             self.send_header("Vary", "Origin")
         self.end_headers()
         if not head_only:
@@ -649,6 +661,19 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_HEAD(self) -> None:  # noqa: N802
         self.handle_request(head_only=True)
+
+    def do_OPTIONS(self) -> None:  # noqa: N802
+        """跨源预检：GitHub Pages 这类远端页面访问本机服务时，浏览器会先发 OPTIONS。"""
+        parsed = urllib.parse.urlparse(self.path)
+        path = urllib.parse.unquote(parsed.path)
+        if not path.startswith("/api/movie/"):
+            self.send_bytes(404, b"", "text/plain; charset=utf-8", head_only=False)
+            return
+        self.cors = cors_origin(self.headers.get("Origin", ""))
+        self.send_bytes(204, b"", "text/plain; charset=utf-8", head_only=False,
+                        extra={"Access-Control-Allow-Methods": "GET, HEAD, POST, OPTIONS",
+                               "Access-Control-Allow-Headers": "Accept, Content-Type",
+                               "Access-Control-Max-Age": "86400"})
 
     def handle_request(self, head_only: bool) -> None:
         parsed = urllib.parse.urlparse(self.path)
@@ -741,6 +766,11 @@ class Handler(BaseHTTPRequestHandler):
         remote = self.client_address[0] if self.client_address else ""
         if remote not in ("127.0.0.1", "::1", "::ffff:127.0.0.1"):
             self.send_json(403, {"error": "只允许本机停止服务"}, head_only)
+            return
+        # 数据接口对任意来源开放，停止服务不行：只有本机页面（或没有 Origin 的脚本）可以停。
+        origin = (self.headers.get("Origin") or "").strip()
+        if origin and not LOCAL_ORIGIN.match(origin):
+            self.send_json(403, {"error": "只允许本机页面停止服务"}, head_only)
             return
         self.send_json(200, {"ok": True, "stopping": True}, head_only)
         threading.Timer(0.2, shutdown_server).start()

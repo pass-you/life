@@ -2506,6 +2506,36 @@
       });
     }
 
+    // 页面托管在 GitHub Pages 这类远端 https 站点时，浏览器禁止网页访问本机
+    // 127.0.0.1（Chrome 的本地网络访问保护），跨源探测必然失败，与服务有没有启动无关。
+    // 此时给一条直达本机日历的链接：那边是同源，找电影一定能用。
+    function remoteHosted() {
+      return location.protocol === 'https:' &&
+        !/^(127\.0\.0\.1|localhost|\[::1\])$/.test(location.hostname);
+    }
+
+    function localMovieUrl() {
+      return 'http://127.0.0.1:8765/?movie=1#/' + year + '/' + month + '/' + day;
+    }
+
+    function offlineNotice() {
+      const start = '找电影由本地 <code>serve.py</code> 提供：双击项目里的 ' +
+        '<code>启动人生日历.vbs</code>（不会弹命令行窗口；macOS / Linux 运行 ' +
+        '<code>python serve.py</code>），它会启动服务并自动打开日历。';
+      if (remoteHosted()) {
+        return '<span class="movie-offline">' +
+          '当前页面在远端地址（如 GitHub Pages），浏览器不允许它访问本机服务，' +
+          '所以这里连不上豆瓣片库。' + start +
+          '启动后点「在本机打开找电影」，会在本机日历里直接打开找电影这一页。' +
+          '</span>' +
+          '<a class="movie-retry movie-local" data-local href="' + esc(localMovieUrl()) + '">' +
+          '在本机打开找电影</a>' +
+          '<button type="button" class="movie-retry" data-start>已启动，重新检测</button>';
+      }
+      return '<span class="movie-offline">' + start + '</span>' +
+        '<button type="button" class="movie-retry" data-start>已启动，重新检测</button>';
+    }
+
     function renderStatus() {
       if (feed.error) {
         countEl.innerHTML = '<span class="movie-error">' + esc(feed.error) + '</span>' +
@@ -2515,10 +2545,7 @@
       } else if (feed.online === null) {
         countEl.textContent = '正在连接豆瓣片库…';
       } else if (feed.online !== true) {
-        countEl.innerHTML = '<span class="movie-offline">找电影由本地 <code>serve.py</code> 提供：' +
-          '双击项目里的 <code>启动人生日历.vbs</code>（不会弹命令行窗口；macOS / Linux 运行 ' +
-          '<code>python serve.py</code>），它会启动服务并自动打开日历。</span>' +
-          '<button type="button" class="movie-retry" data-start>已启动，重新检测</button>';
+        countEl.innerHTML = offlineNotice();
       } else if (!feed.items.length) {
         countEl.textContent = feed.note || '没有符合条件的电影，换个筛选条件或关键词试试。';
       } else {
@@ -3357,6 +3384,25 @@
     else renderDay(route.y, route.m, route.d);
   }
 
+  /* 远端页面（GitHub Pages）无法访问本机服务，链接会带着 ?movie=1 跳到本机日历，
+   * 这里读完 hash 路由后直接把找电影打开，用户不用再点一次。 */
+  function openMovieFromQuery() {
+    let params;
+    try {
+      params = new URLSearchParams(location.search);
+    } catch (err) {
+      return;
+    }
+    if (params.get('movie') !== '1') return;
+    const route = parseRoute();
+    try {
+      history.replaceState(null, '', location.pathname + location.hash);
+    } catch (err) {
+      /* file:// 等环境下忽略 */
+    }
+    if (route.level === 'day') openMovieModal(route.y, route.m, route.d);
+  }
+
   /* ---------------- 启动 ---------------- */
 
   buildSwatches();
@@ -3415,5 +3461,6 @@
   });
   window.addEventListener('resize', updateWeatherOverlaySize);
   render();
+  openMovieFromQuery();
   restoreStoredHandle();
 })();
