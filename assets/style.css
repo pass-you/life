@@ -3316,13 +3316,26 @@ body.modal-open {
   overflow: hidden;
 }
 
+/* 剧照完整居中显示；四周用同一张图的模糊放大版补边，不裁掉画面内容 */
+.fiche-shot-fill {
+  position: absolute;
+  inset: -60px;
+  background-size: cover;
+  background-position: center;
+  filter: blur(42px) saturate(1.08) brightness(0.62);
+  transform: scale(1.08);
+}
+
 .fiche-shot {
   position: absolute;
-  inset: -3%;
-  background-size: cover;
-  background-position: center 22%;
-  transform: scale(1.03);
+  inset: 0;
+  z-index: 1;
+  background-size: contain;
+  background-position: center;
+  background-repeat: no-repeat;
   filter: saturate(1.06);
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 5%, #000 95%, transparent 100%);
+  mask-image: linear-gradient(90deg, transparent 0, #000 5%, #000 95%, transparent 100%);
 }
 
 .fiche-veil {
@@ -3723,6 +3736,16 @@ body.modal-open {
 }
 
 @media (max-width: 860px) {
+  /* 窄屏没有横向余量放完整 16:9 剧照，改为满幅铺底；焦点下移到画面中部 */
+  .fiche-shot-fill {
+    display: none;
+  }
+
+  .fiche-shot {
+    background-size: cover;
+    background-position: center 22%;
+  }
+
   .fiche-hero-inner {
     align-items: flex-end;
     min-height: 0;

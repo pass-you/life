@@ -2826,7 +2826,8 @@
           '<article class="movie-fiche">' +
           '<header class="fiche-hero' + (backdrop ? '' : ' is-plain') + '">' +
           (backdrop
-            ? '<div class="fiche-shot-wrap" aria-hidden="true"><div class="fiche-shot" style="background-image:url(' +
+            ? '<div class="fiche-shot-wrap" aria-hidden="true"><div class="fiche-shot-fill" style="background-image:url(' +
+              esc(backdrop) + ')"></div><div class="fiche-shot" style="background-image:url(' +
               esc(backdrop) + ')"></div></div>'
             : '') +
           '<div class="fiche-veil" aria-hidden="true"></div>' +
