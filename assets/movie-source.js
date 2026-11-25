@@ -643,6 +643,55 @@ window.MovieSource = (function () {
     });
   }
 
+  /* ---------------- 中英文片名互查 ---------------- */
+
+  // 收藏条目可能只有中文名（TMDB 条目）或只有英文名（Cinemeta 条目）。
+  // 用户用另一种语言搜索时，本地字符串比对必然漏片，所以把关键词同时交给两个
+  // 片源，拿回它们认为「叫这个名字」的候选（片名 + 两套 id），由调用方与收藏
+  // 条目对齐。Cinemeta 的搜索本身也认中文别名（search=盗梦空间 → Inception），
+  // 所以没填 Key 时这条路径同样有效；TMDB 有 Key 时额外提供中文片名。
+  function resolve(keyword) {
+    const kw = String(keyword || '').trim();
+    if (!kw) return Promise.resolve({ ids: [], titles: [] });
+    return memoJSON('resolve|' + kw, function () {
+      const jobs = [];
+      if (key) {
+        jobs.push(request(tmdbUrl('search/movie', {
+          query: kw, page: 1, include_adult: 'false'
+        })).then(function (payload) {
+          const items = (payload && Array.isArray(payload.results) ? payload.results : [])
+            .map(normalizeTmdb).filter(Boolean);
+          return items.map(function (item) {
+            return { ids: [item.id], titles: [item.title, item.originalTitle] };
+          });
+        }).catch(function () { return []; }));
+      }
+      jobs.push(cineRequest(cineUrl('top', { search: kw })).then(function (payload) {
+        const raw = payload && Array.isArray(payload.metas) ? payload.metas : [];
+        return raw.map(function (entry) {
+          return { ids: [entry.imdb_id || entry.id], titles: [entry.name] };
+        });
+      }).catch(function () { return []; }));
+      return Promise.all(jobs).then(function (groups) {
+        const ids = [];
+        const titles = [];
+        groups.forEach(function (group) {
+          group.forEach(function (entry) {
+            (entry.ids || []).forEach(function (value) {
+              const id = String(value || '');
+              if (id && ids.indexOf(id) < 0) ids.push(id);
+            });
+            (entry.titles || []).forEach(function (value) {
+              const name = String(value || '').trim();
+              if (name && titles.indexOf(name) < 0) titles.push(name);
+            });
+          });
+        });
+        return { ids: ids, titles: titles };
+      });
+    });
+  }
+
   // 用 IMDb id 反查 TMDB 数字 id：两个片源要认出同一部片，
   // 收藏里存的 IMDb id 必须能映射到 TMDB 条目，否则切到 TMDB 就丢了状态。
   function findByImdb(imdbId) {
@@ -780,6 +829,7 @@ window.MovieSource = (function () {
     search: search,
     detail: detail,
     lookup: lookup,
+    resolve: resolve,
     findByImdb: findByImdb,
     cinemetaLookup: cinemetaLookup,
     poster: function (value) { return value && /^https?:\/\//.test(value) ? value : tmdbImage(value, 'w342'); },

@@ -3272,18 +3272,82 @@
         filters.decade !== '全部' || filters.rating !== '全部' || !!filters.query.trim();
     }
 
-    // 清单在本地筛选：类型 / 地区 / 年代 / 关键词都是收藏时随 MD 一起保存的字段。
+    // 清单搜索：本地字符串只认条目里已有的名字，中文条目（TMDB）没有英文名、
+    // 英文条目（Cinemeta）没有中文名，单靠本地比对必然漏片。所以关键词一变就
+    // 把词交给片源解析成候选片名 / id（中英文都认），再按 id、片名与收藏对齐。
+    const titleIndex = { query: '', ids: [], titles: [], loading: false, done: false };
+    let titleToken = 0;
+
+    function startTitleResolve(keyword) {
+      const kw = String(keyword || '').trim();
+      if (!kw) {
+        titleToken += 1;
+        titleIndex.query = '';
+        titleIndex.ids = [];
+        titleIndex.titles = [];
+        titleIndex.loading = false;
+        titleIndex.done = false;
+        return;
+      }
+      if (titleIndex.query === kw && (titleIndex.loading || titleIndex.done)) return;
+      titleIndex.query = kw;
+      titleIndex.ids = [];
+      titleIndex.titles = [];
+      titleIndex.loading = true;
+      titleIndex.done = false;
+      const token = (titleToken += 1);
+      MovieSource.resolve(kw).then(function (result) {
+        if (token !== titleToken) return; // 关键词已经换了，丢弃这次结果
+        titleIndex.ids = result.ids || [];
+        titleIndex.titles = (result.titles || []).map(filmTitleKey).filter(Boolean);
+        titleIndex.loading = false;
+        titleIndex.done = true;
+        if (libraryKind && filters.query.trim() === kw) renderLibraryView();
+      }).catch(function () {
+        if (token !== titleToken) return;
+        titleIndex.loading = false;
+        titleIndex.done = false; // 断网时不记住失败，下次输入同一关键词会重试
+        if (libraryKind && filters.query.trim() === kw) renderLibraryView();
+      });
+    }
+
+    function localKeywordHit(item, keyword) {
+      const hay = [item.title, item.originalTitle, item.year,
+        (item.genres || []).join(' '), (item.regions || []).join(' '),
+        item.id, item.imdbId, item.tmdbId].join(' ').toLowerCase();
+      return hay.indexOf(keyword) >= 0;
+    }
+
+    function resolvedIdHit(item) {
+      if (!titleIndex.ids.length) return false;
+      return [item.id, item.imdbId, item.tmdbId].some(function (id) {
+        return !!id && titleIndex.ids.indexOf(String(id)) >= 0;
+      });
+    }
+
+    // 候选片名带副标题时（"The Crack: Inception"）也算命中，但只在精确匹配
+    // 全军覆没后才启用，避免一两个词命中整页同名系列片。
+    function resolvedTitleHit(item, loose) {
+      if (!titleIndex.titles.length) return false;
+      return filmTitleKeys(item).some(function (key) {
+        if (!key) return false;
+        if (titleIndex.titles.indexOf(key) >= 0) return true;
+        if (!loose || key.length < 3) return false;
+        return titleIndex.titles.some(function (name) {
+          return name.indexOf(key) >= 0 || key.indexOf(name) >= 0;
+        });
+      });
+    }
+
+    // 清单筛选：类型 / 地区 / 年代 / 评分用收藏时随 MD 保存的字段，
+    // 关键词同时走本地命中与片源解析出的中英文候选。
     function libraryFiltered() {
-      const keyword = filters.query.trim().toLowerCase();
+      const keyword = filters.query.trim();
+      const needle = keyword.toLowerCase();
       const decade = MOVIE_DECADES.filter(function (item) {
         return item.label === filters.decade;
       })[0] || {};
-      return collectionList(libraryKind).filter(function (item) {
-        if (keyword) {
-          const hay = [item.title, item.year, (item.genres || []).join(' '),
-            (item.regions || []).join(' ')].join(' ').toLowerCase();
-          if (hay.indexOf(keyword) < 0) return false;
-        }
+      const base = collectionList(libraryKind).filter(function (item) {
         if (filters.genre !== '全部' && (item.genres || []).indexOf(filters.genre) < 0) return false;
         if (!regionMatches(item, filters.region)) return false;
         const minRating = RATING_MIN[filters.rating] || 0;
@@ -3294,6 +3358,14 @@
         }
         return true;
       });
+      if (!needle) return base;
+      const cross = titleIndex.query === keyword;
+      const exact = base.filter(function (item) {
+        return localKeywordHit(item, needle) ||
+          (cross && (resolvedIdHit(item) || resolvedTitleHit(item, false)));
+      });
+      if (exact.length || !cross) return exact;
+      return base.filter(function (item) { return resolvedTitleHit(item, true); });
     }
 
     function sortLibrary(list) {
@@ -3328,9 +3400,16 @@
         ? '<b>' + list.length + '</b> / ' + all.length + ' 部'
         : '<b>' + all.length + '</b> 部';
       let html = '<p class="movie-count">' + name + ' ' + count + '</p>';
+      const searching = filters.query.trim() && titleIndex.query === filters.query.trim();
+      if (searching && titleIndex.loading) {
+        html += '<p class="movie-note">正在按中英文片名互相匹配…</p>';
+      }
       html += list.length
         ? '<div class="movie-grid">' + list.map(libraryCard).join('') + '</div>'
-        : '<p class="movie-empty">没有符合条件的影片，换个关键词或筛选条件试试。</p>';
+        : '<p class="movie-empty">' + (searching && titleIndex.loading
+          ? '本地清单里没有直接命中的片名，正在向片源查它的中文 / 英文名…'
+          : '没有符合条件的影片，换个关键词或筛选条件试试。系统会自动在中文名和英文名之间互查。') +
+          '</p>';
       if (narrowed && all.some(needsEnrich)) {
         html += '<p class="movie-note movie-hint">' +
           '部分影片还没有类型 / 地区资料（收藏时联网才能补齐），筛选时会漏掉它们。' +
@@ -3358,8 +3437,8 @@
       countEl.hidden = true;
       renderLibraryButtons();
       applySortOptions();
+      startTitleResolve(filters.query);
       renderLibraryView();
-      enrichLibraryList();
       scrollEl.scrollTop = 0;
     }
 
@@ -3814,8 +3893,10 @@
       clearTimeout(searchTimer);
       searchTimer = setTimeout(function () {
         filters.query = searchInput.value;
-        if (libraryKind) renderLibraryView();
-        else resetFeed();
+        if (libraryKind) {
+          startTitleResolve(filters.query);
+          renderLibraryView();
+        } else resetFeed();
       }, 200);
     });
 
