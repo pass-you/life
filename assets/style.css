@@ -3093,9 +3093,7 @@ body.modal-open {
   justify-content: space-between;
   gap: 10px;
   padding: 16px 30px;
-  background: linear-gradient(180deg, rgba(22, 17, 19, 0.58), rgba(22, 17, 19, 0.16));
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  background: none;
   pointer-events: none;
 }
 
