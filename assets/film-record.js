@@ -25,6 +25,33 @@
     return out;
   }
 
+  // Cinemeta / TMDB 的地区字段是英文国名，清单的筛选器按中文口径匹配。
+  // 收藏时就统一成中文，写回 MD 后中英文两条记录（或两个片源）也能对上。
+  const REGION_ZH = {
+    'united states of america': '美国', 'united states': '美国', 'usa': '美国', 'us': '美国',
+    'china': '中国大陆', 'mainland china': '中国大陆',
+    'hong kong sar china': '中国香港', 'hong kong': '中国香港', 'taiwan': '中国台湾',
+    'japan': '日本', 'south korea': '韩国', 'korea': '韩国', 'north korea': '朝鲜',
+    'united kingdom': '英国', 'uk': '英国', 'england': '英国', 'france': '法国',
+    'germany': '德国', 'west germany': '德国', 'italy': '意大利', 'spain': '西班牙',
+    'india': '印度', 'thailand': '泰国', 'russia': '俄罗斯', 'soviet union': '苏联',
+    'canada': '加拿大', 'australia': '澳大利亚', 'ireland': '爱尔兰', 'sweden': '瑞典',
+    'denmark': '丹麦', 'netherlands': '荷兰', 'poland': '波兰', 'austria': '奥地利',
+    'belgium': '比利时', 'mexico': '墨西哥', 'brazil': '巴西', 'argentina': '阿根廷',
+    'new zealand': '新西兰', 'south africa': '南非', 'egypt': '埃及', 'turkey': '土耳其',
+    'greece': '希腊', 'portugal': '葡萄牙', 'switzerland': '瑞士', 'norway': '挪威',
+    'finland': '芬兰', 'czech republic': '捷克', 'czechia': '捷克', 'hungary': '匈牙利',
+    'romania': '罗马尼亚', 'iran': '伊朗', 'israel': '以色列', 'singapore': '新加坡',
+    'malaysia': '马来西亚', 'indonesia': '印度尼西亚', 'philippines': '菲律宾',
+    'vietnam': '越南', 'ukraine': '乌克兰'
+  };
+
+  function regionLabel(value) {
+    const text = String(value || '').trim();
+    if (!text) return '';
+    return REGION_ZH[text.toLowerCase()] || text;
+  }
+
   function normalizeCollectionItem(item) {
     const raw = item && typeof item === 'object' ? item : {};
     const title = typeof raw.title === 'string' ? raw.title.replace(/\s+/g, ' ').trim() : '';
@@ -51,6 +78,9 @@
       year: year, rating: rating, cover: cover, added: added,
       genres: normalizeTagList(raw.genres, 4),
       regions: normalizeTagList(raw.regions || raw.region, 3)
+        .map(regionLabel)
+        .filter(function (value, index, list) { return value && list.indexOf(value) === index; })
+        .slice(0, 3)
     };
   }
 

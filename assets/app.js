@@ -196,6 +196,15 @@
     return out + '</div>';
   }
 
+  // 雨雪粒子按视口宽度降级：手机屏幕上 200 多个独立动画元素会明显拖慢合成，
+  // 而小屏本身也放不下那么多雨丝。桌面保持满量。
+  function sceneCount(value) {
+    const width = window.innerWidth || 1024;
+    if (width <= 480) return Math.max(4, Math.round(value * 0.5));
+    if (width <= 860) return Math.max(6, Math.round(value * 0.72));
+    return value;
+  }
+
   function weatherSceneMarkup(item) {
     const key = item.icon;
     const sun = '<div class="scene-sun" aria-hidden="true"></div>';
@@ -211,26 +220,27 @@
     } else if (key === 'rain') {
       html += sceneClouds(2) +
         '<div class="scene-rain">' +
-        '<div class="rain-far">' + sceneParticles(40, 'farRain') + '</div>' +
-        '<div class="rain-near">' + sceneParticles(16, 'nearRain') + '</div>' +
-        '</div>' + sceneSplashes(10, false);
+        '<div class="rain-far">' + sceneParticles(sceneCount(40), 'farRain') + '</div>' +
+        '<div class="rain-near">' + sceneParticles(sceneCount(16), 'nearRain') + '</div>' +
+        '</div>' + sceneSplashes(sceneCount(10), false);
     } else if (key === 'heavyRain') {
       html += sceneClouds(3) +
         '<div class="scene-rain">' +
-        '<div class="rain-far">' + sceneParticles(70, 'farRain') + '</div>' +
-        '<div class="rain-near">' + sceneParticles(48, 'nearRain') + '</div>' +
-        '</div>' + sceneSplashes(24, true);
+        '<div class="rain-far">' + sceneParticles(sceneCount(70), 'farRain') + '</div>' +
+        '<div class="rain-near">' + sceneParticles(sceneCount(48), 'nearRain') + '</div>' +
+        '</div>' + sceneSplashes(sceneCount(24), true);
     } else if (key === 'storm') {
       html += sceneClouds(3) +
         '<div class="scene-rain">' +
-        '<div class="rain-far">' + sceneParticles(110, 'farRain') + '</div>' +
-        '<div class="rain-near">' + sceneParticles(70, 'nearRain') + '</div>' +
-        '</div>' + sceneSplashes(32, true) +
+        '<div class="rain-far">' + sceneParticles(sceneCount(110), 'farRain') + '</div>' +
+        '<div class="rain-near">' + sceneParticles(sceneCount(70), 'nearRain') + '</div>' +
+        '</div>' + sceneSplashes(sceneCount(32), true) +
         '<svg class="scene-lightning" viewBox="0 0 40 60" aria-hidden="true">' +
         '<path d="M22 4 10 31h8l-3 22 13-27h-7l1-22"/></svg>' +
         '<div class="scene-flash"></div>';
     } else if (key === 'snow') {
-      html += sceneClouds(2) + '<div class="scene-snow">' + sceneParticles(100, 'snow') + sceneSnowFeatures() + '</div>';
+      html += sceneClouds(2) + '<div class="scene-snow">' +
+        sceneParticles(sceneCount(100), 'snow') + sceneSnowFeatures() + '</div>';
     } else if (key === 'fog') {
       html += sceneClouds(1) +
         '<div class="scene-fog"><span></span><span></span><span></span></div>';
@@ -256,6 +266,16 @@
     const bottom = Math.max(0, Math.round(meta.getBoundingClientRect().top + window.scrollY));
     overlay.style.height = bottom + 'px';
     overlay.style.setProperty('--fall', bottom + 'px');
+  }
+
+  // resize 期间每帧最多测量一次，避免拖动窗口时反复触发布局。
+  let weatherSizeFrame = 0;
+  function scheduleWeatherOverlaySize() {
+    if (weatherSizeFrame) return;
+    weatherSizeFrame = window.requestAnimationFrame(function () {
+      weatherSizeFrame = 0;
+      updateWeatherOverlaySize();
+    });
   }
 
   function hideWeatherOverlay() {
@@ -378,6 +398,10 @@
     return node;
   }
 
+  // 已规范化过的日节点：编辑时每次 input 都会取一次 dayNode，
+  // 不缓存的话每次都要重建支出数组，输入越长越卡。
+  const normalizedDays = new WeakSet();
+
   function dayNode(year, month, day, create) {
     const mNode = monthNode(year, month, create);
     if (!mNode) return null;
@@ -392,6 +416,7 @@
       mNode.days[key] = { mood: '', weather: '', journal: '', highlights: '', next: '', expenses: [] };
       return mNode.days[key];
     }
+    if (normalizedDays.has(node)) return node;
     // 兼容旧文件：work 字段迁移到 journal。
     if (typeof node.work === 'string') {
       if (typeof node.journal !== 'string' || !node.journal) {
@@ -413,6 +438,7 @@
     }).filter(function (item) {
       return !!(item.name || item.price);
     });
+    normalizedDays.add(node);
     return node;
   }
 
@@ -2646,8 +2672,8 @@
     const label = scope === 'month' ? '本月看过的电影' : '本年看过的电影';
     return '<button type="button" class="expense-entry film-entry' +
       (count ? ' has-movies' : '') + '" data-movies-open data-movie-scope="' + scope +
-      '" aria-haspopup="dialog" title="' + label + ' · ' + count + ' 部 · 打开找电影' +
-      '" aria-label="' + label + '，' + count + ' 部，打开找电影">' + FILM_ICON + '</button>';
+      '" aria-haspopup="dialog" title="' + label + ' · ' + count + ' 部 · 查看' +
+      '" aria-label="' + label + '，' + count + ' 部，查看">' + FILM_ICON + '</button>';
   }
 
   function wireMovieEntry(year, month, day) {
@@ -3108,16 +3134,30 @@
       repairLibrary(2);
     }
 
-    function cardMarkup(movie) {
+    // TMDB 的 w342 海报可以换成更贴卡片宽度的尺寸；手机两列时 w185 足够，
+    // 省一半流量也更快出图。其它片源（Cinemeta 等）保持原地址。
+    function posterSrcset(src) {
+      const hit = /^(https:\/\/image\.tmdb\.org\/t\/p\/)w342(\/.+)$/.exec(src);
+      if (!hit) return '';
+      return hit[1] + 'w185' + hit[2] + ' 185w, ' + src + ' 342w, ' +
+        hit[1] + 'w500' + hit[2] + ' 500w';
+    }
+
+    function cardMarkup(movie, priority) {
       const id = movie.id;
       const posterSrc = posterOf(movie);
+      const srcset = posterSrcset(posterSrc);
       const line = [movie.year, (movie.genres || []).slice(0, 2).join(' / ')]
         .filter(Boolean).join(' · ');
       return '<article class="movie-card">' +
         '<button type="button" class="movie-poster' + (posterSrc ? '' : ' is-plain') +
         '" data-open="' + esc(id) + '" data-title="' + esc(movie.title) + '" aria-label="查看《' + esc(movie.title) + '》的详情">' +
         (posterSrc
-          ? '<img class="movie-poster-img" src="' + esc(posterSrc) + '" alt="" loading="lazy" decoding="async">'
+          ? '<img class="movie-poster-img" src="' + esc(posterSrc) + '"' +
+            (srcset ? ' srcset="' + esc(srcset) + '" sizes="(max-width: 480px) 44vw, (max-width: 860px) 30vw, 200px"' : '') +
+            ' width="300" height="415" alt="" loading="' + (priority ? 'eager' : 'lazy') + '"' +
+            (priority ? ' fetchpriority="high"' : '') +
+            ' decoding="async">'
           : '') +
         '<span class="movie-poster-fallback">' + esc(movie.title.slice(0, 4)) + '</span>' +
         (movie.rating ? '<span class="movie-score">' + movie.rating.toFixed(1) + '</span>' : '') +
@@ -3458,13 +3498,18 @@
       return MovieSource.poster(item.cover);
     }
 
-    function libraryCard(item) {
+    function libraryCard(item, priority) {
       const posterSrc = libraryPoster(item);
+      const srcset = posterSrcset(posterSrc);
       return '<article class="movie-card">' +
         '<button type="button" class="movie-poster' + (posterSrc ? '' : ' is-plain') +
         '" data-open="' + esc(item.id) + '" data-title="' + esc(item.title) + '" aria-label="查看《' + esc(item.title) + '》的详情">' +
         (posterSrc
-          ? '<img class="movie-poster-img" src="' + esc(posterSrc) + '" alt="" loading="lazy" decoding="async">'
+          ? '<img class="movie-poster-img" src="' + esc(posterSrc) + '"' +
+            (srcset ? ' srcset="' + esc(srcset) + '" sizes="(max-width: 480px) 44vw, (max-width: 860px) 30vw, 200px"' : '') +
+            ' width="300" height="415" alt="" loading="' + (priority ? 'eager' : 'lazy') + '"' +
+            (priority ? ' fetchpriority="high"' : '') +
+            ' decoding="async">'
           : '') +
         '<span class="movie-poster-fallback">' + esc(item.title.slice(0, 4)) + '</span>' +
         (item.rating ? '<span class="movie-score">' + item.rating.toFixed(1) + '</span>' : '') +
@@ -3634,7 +3679,9 @@
         html += '<p class="movie-note">正在按中英文片名互相匹配…</p>';
       }
       html += list.length
-        ? '<div class="movie-grid">' + list.map(libraryCard).join('') + '</div>'
+        ? '<div class="movie-grid">' + list.map(function (item, index) {
+          return libraryCard(item, index < 4);
+        }).join('') + '</div>'
         : '<p class="movie-empty">' + (searching && titleIndex.loading
           ? '本地清单里没有直接命中的片名，正在向片源查它的中文 / 英文名…'
           : '没有符合条件的影片，换个关键词或筛选条件试试。系统会自动在中文名和英文名之间互查。') +
@@ -3825,7 +3872,9 @@
         feed.items = feed.items.concat(result.items);
         clearSkeleton();
         if (result.items.length) {
-          grid.insertAdjacentHTML('beforeend', result.items.map(cardMarkup).join(''));
+          grid.insertAdjacentHTML('beforeend', result.items.map(function (item, index) {
+            return cardMarkup(item, isFirst && index < 6);
+          }).join(''));
           // 预先抓取最可能被点开的前两部，点开时就接近瞬开。
           result.items.slice(0, 2).forEach(function (item) {
             setTimeout(function () { MovieSource.preload(item.id); }, 600);
@@ -3929,7 +3978,9 @@
         feed.items = batch;
         clearSkeleton();
         if (batch.length) {
-          grid.innerHTML = batch.map(cardMarkup).join('');
+          grid.innerHTML = batch.map(function (item, index) {
+            return cardMarkup(item, index < 6);
+          }).join('');
           batch.slice(0, 2).forEach(function (item) {
             setTimeout(function () { MovieSource.preload(item.id); }, 400);
           });
@@ -4215,7 +4266,10 @@
         showKeyPanel(true);
       }
     });
-    searchInput.focus();
+    // 桌面打开就聚焦搜索框；手机不自动聚焦，避免一进页面就弹出键盘挡住列表。
+    if (!window.matchMedia || window.matchMedia('(pointer: fine)').matches) {
+      searchInput.focus();
+    }
   }
 
 
@@ -4279,8 +4333,7 @@
       '',
       '- 格式版本：11',
       '- 导出时间：' + nowStamp(),
-      '- 主题色：' + state.color,
-      ''
+      '- 主题色：' + state.color
     ];
 
     // TMDB Key 跟着日历文件走，换浏览器导入同一个 MD 就不用重填。
@@ -4289,8 +4342,9 @@
       ? String(MovieSource.getKey() || '')
       : '';
     if (/^[A-Za-z0-9._-]{8,100}$/.test(tmdbKey)) {
-      parts.push('- TMDB Key：' + tmdbKey, '');
+      parts.push('- TMDB Key：' + tmdbKey);
     }
+    parts.push('');
 
     [
       { kind: 'wish', heading: '想看的电影' },
@@ -4299,9 +4353,11 @@
       const list = collectionList(entry.kind);
       if (!list.length) return;
       parts.push('## ' + entry.heading, '');
+      // 清单行连续写，条目之间不留空行：文件更小，导入也更快。
       list.forEach(function (item) {
-        parts.push(movieRecordLine(item), '');
+        parts.push(movieRecordLine(item));
       });
+      parts.push('');
     });
 
     Object.keys(state.years)
@@ -4435,6 +4491,24 @@
 
     lines.forEach(function (line) {
       let match;
+
+      // 快速通道：正文行远多于结构行。除电影清单的「-」条目外，所有结构行都以
+      // 「#」开头，因此非 # 行可以直接归入当前字段，不必逐行跑十来条正则。
+      // 几 MB 的大文件导入主要省在这里。
+      if (line.charCodeAt(0) !== 35) {
+        if (inHeader) {
+          // 头部只有「-」列表行有语义（格式版本 / 主题色 / TMDB Key）。
+          if (line.charCodeAt(0) !== 45) return;
+        } else {
+          if (movieSection && /^\s*-/.test(line)) {
+            const item = parseMovieLine(line, '');
+            if (item) addToCollection(movieSection, item);
+            return;
+          }
+          if (target) target.lines.push(line);
+          return;
+        }
+      }
 
       if (inHeader) {
         if (/^##/.test(line)) {
@@ -4883,7 +4957,7 @@
     }
     render();
   });
-  window.addEventListener('resize', updateWeatherOverlaySize);
+  window.addEventListener('resize', scheduleWeatherOverlaySize);
   render();
   openMovieFromQuery();
   restoreStoredHandle();
