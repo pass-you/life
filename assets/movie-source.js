@@ -848,11 +848,6 @@ window.MovieSource = (function () {
     return SITE + encodeURIComponent(id);
   }
 
-  function doubanSearchUrl(title) {
-    return 'https://search.douban.com/movie/subject_search?search_text=' +
-      encodeURIComponent(String(title || '').trim());
-  }
-
   return {
     GENRES: GENRES,
     MAX_PAGE: MAX_PAGE,
@@ -870,7 +865,6 @@ window.MovieSource = (function () {
     cinemetaLookup: cinemetaLookup,
     poster: function (value) { return value && /^https?:\/\//.test(value) ? value : tmdbImage(value, 'w342'); },
     pageUrl: pageUrl,
-    doubanSearchUrl: doubanSearchUrl,
     preload: preload,
     setKey: setKey,
     setProvider: setProvider,

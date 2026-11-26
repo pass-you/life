@@ -3120,7 +3120,7 @@ body.modal-open {
   pointer-events: auto;
 }
 
-.detail-douban {
+.detail-source {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -3131,17 +3131,17 @@ body.modal-open {
   transition: opacity 0.18s ease, transform 0.18s ease;
 }
 
-.detail-douban:hover {
+.detail-source:hover {
   opacity: 1;
   transform: translateY(-1px);
 }
 
-.detail-douban svg {
+.detail-source svg {
   width: 26px;
   height: 26px;
 }
 
-.detail-douban:focus-visible {
+.detail-source:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
@@ -3794,26 +3794,31 @@ body.modal-open {
   color: var(--muted);
 }
 
-/* 月 / 年页面「看过的电影」归档：只读网格，海报和片名都直接去豆瓣。 */
-.archive-sheet {
-  width: min(880px, 100%);
+/* 月 / 年入口打开的「看过」清单：顶部一行说明当前范围，可一键回到全部看过。 */
+.movie-scope-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
 }
 
-.archive-grid {
-  margin-top: 18px;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+.movie-scope-bar .movie-count {
+  margin: 0;
 }
 
-.archive-sheet .movie-empty {
-  padding: 54px 12px;
-  line-height: 1.7;
+.movie-scope-clear {
+  padding: 3px 12px;
+  border: 1px solid var(--accent-line);
+  border-radius: 999px;
+  background: var(--accent-ghost);
+  color: var(--accent-ink);
+  font-size: 12px;
+  cursor: pointer;
 }
 
-@media (max-width: 720px) {
-  .archive-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 16px 12px;
-  }
+.movie-scope-clear:hover {
+  border-color: var(--accent);
 }
 
 @media (max-width: 720px) {
@@ -4017,11 +4022,6 @@ body.modal-open {
 
   .fiche-links {
     gap: 8px;
-  }
-
-  .douban-frame {
-    height: 420px;
-    border-radius: 10px;
   }
 }
 

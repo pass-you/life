@@ -452,6 +452,19 @@
   function refreshMovieEntry() {
     const entry = app.querySelector('[data-movies-open]');
     if (!entry) return;
+    const scope = entry.dataset.movieScope || '';
+    if (scope) {
+      // 月 / 年入口显示的是该期间标记「看过」的片数，不是全库计数，
+      // 否则导入或标记后会被改写成日页面的文案。
+      const route = parseRoute();
+      const count = route.y
+        ? watchedArchive(route.y, scope === 'month' ? route.m : 0).length : 0;
+      const label = scope === 'month' ? '本月看过的电影' : '本年看过的电影';
+      entry.classList.toggle('has-movies', count > 0);
+      entry.title = label + ' · ' + count + ' 部 · 打开找电影';
+      entry.setAttribute('aria-label', label + '，' + count + ' 部，打开找电影');
+      return;
+    }
     const counts = libraryCounts();
     entry.classList.toggle('has-movies', counts.wish + counts.watched > 0);
     entry.title = '找电影 · 想看 ' + counts.wish + ' 部 · 看过 ' + counts.watched + ' 部';
@@ -1707,7 +1720,7 @@
     }, 260, '这一年想完成什么？想成为怎样的人？写下几件最重要的事。');
 
     wireYearFinanceEntry(year);
-    wireMovieArchive('year', year);
+    wireMovieEntry(year);
     wireReview('year', year);
   }
 
@@ -1978,7 +1991,7 @@
     }, 240, '这个月的重点是什么？想在哪些事情上保持节奏？');
 
     wireMonthFinanceEntry(year, month);
-    wireMovieArchive('month', year, month);
+    wireMovieEntry(year, month);
     wireReview('month', year, month);
   }
 
@@ -2378,10 +2391,10 @@
     else setTimeout(start, 800);
   }
 
-  /* ---------------- 月 / 年页面的电影归档 ---------------- */
+  /* ---------------- 月 / 年页面的电影入口 ---------------- */
 
-  // 「看过」记录在 MD 里带 added（标记看过的那天）。月页 / 年页按这一天归档；
-  // 旧文件里缺少 added 的条目在导入时会按导入当天补上（addToCollection 的既有行为）。
+  // 「看过」记录在 MD 里带 added（标记看过的那天）。月页 / 年页按这一天数出
+  // 本月 / 本年看过的片，作为打开「找电影」时默认显示的清单。
   function watchedArchive(year, month) {
     const prefix = month ? year + '-' + pad2(month) : year + '-';
     return uniqueFilms(collectionList('watched')).filter(function (item) {
@@ -2392,119 +2405,37 @@
     });
   }
 
+  // 月 / 年与日页面共用同一个「找电影」弹层：同一套 TMDB / Cinemeta 片源、
+  // 同一套想看 / 看过标记和影片详情；入口只多带一个归档范围。
   function watchedEntryMarkup(scope, year, month) {
     const count = watchedArchive(year, month).length;
     const label = scope === 'month' ? '本月看过的电影' : '本年看过的电影';
-    return '<button type="button" class="expense-entry film-entry archive-entry' +
-      (count ? ' has-movies' : '') + '" data-movie-archive="' + scope +
-      '" aria-haspopup="dialog" title="' + label + ' · ' + count + ' 部' +
-      '" aria-label="' + label + '，' + count + ' 部">' + FILM_ICON + '</button>';
-  }
-
-  function wireMovieArchive(scope, year, month) {
-    const button = app.querySelector('[data-movie-archive="' + scope + '"]');
-    if (!button) return;
-    button.addEventListener('click', function () {
-      openArchiveModal(scope, year, month);
-    });
-  }
-
-  // 归档弹窗只读：海报与片名都直接跳到豆瓣搜索，不在这里标记收藏，
-  // 避免和日页面的找电影流程出现两种状态入口。
-  function openArchiveModal(scope, year, month) {
-    if (document.querySelector('.expense-modal')) return;
-    const list = watchedArchive(year, month);
-    const title = scope === 'month' ? year + ' 年 ' + month + ' 月' : year + ' 年';
-    const label = scope === 'month' ? '本月看过的电影' : '本年看过的电影';
-    const rangeText = scope === 'month' ? '本月' : '本年';
-
-    const cards = list.map(function (item) {
-      const link = MovieSource.doubanSearchUrl(item.title);
-      // 旧豆瓣海报已被对方站点按外链 403，宁可显示文字占位，也不放一张破图。
-      const cover = item.cover && !/(^|\/\/)[^/]*douban(?:io)?\.com\//i.test(item.cover)
-        ? MovieSource.poster(item.cover)
-        : '';
-      const meta = [item.year, item.added ? item.added + ' 看过' : '']
-        .filter(Boolean).join(' · ');
-      return '<article class="movie-card archive-card">' +
-        '<a class="movie-poster' + (cover ? '' : ' is-plain') + '" href="' + esc(link) +
-        '" target="_blank" rel="noopener noreferrer" aria-label="在豆瓣搜索《' +
-        esc(item.title) + '》">' +
-        (cover
-          ? '<img class="movie-poster-img" src="' + esc(cover) +
-            '" alt="" loading="lazy" decoding="async">'
-          : '') +
-        '<span class="movie-poster-fallback">' + esc(item.title.slice(0, 4)) + '</span>' +
-        (item.rating ? '<span class="movie-score">' + item.rating.toFixed(1) + '</span>' : '') +
-        '</a>' +
-        '<div class="movie-body"><h3 class="movie-name">' +
-        '<a href="' + esc(link) + '" target="_blank" rel="noopener noreferrer">' +
-        esc(item.title) + '</a></h3>' +
-        '<p class="movie-meta">' + esc(meta) + '</p></div></article>';
-    }).join('');
-
-    const overlay = document.createElement('div');
-    overlay.className = 'expense-modal archive-modal';
-    overlay.setAttribute('role', 'dialog');
-    overlay.setAttribute('aria-modal', 'true');
-    overlay.setAttribute('aria-labelledby', 'archive-title');
-    overlay.innerHTML =
-      '<div class="expense-sheet archive-sheet">' +
-      '<div class="expense-head"><div>' +
-      '<p class="eyebrow">' + label + '</p>' +
-      '<h2 id="archive-title">' + title + '</h2>' +
-      '<p class="sub">' + (list.length
-        ? rangeText + '标记看过 ' + list.length + ' 部'
-        : rangeText + '还没有看过的电影') + '</p></div>' +
-      '<button type="button" class="expense-close" aria-label="关闭' + label + '">×</button></div>' +
-      (list.length
-        ? '<div class="movie-grid archive-grid">' + cards + '</div>'
-        : '<p class="movie-empty">在日页面点胶片图标，把看完的片标成「看过」，' +
-          '它就会按标记日期出现在这里。</p>') +
-      '</div>';
-
-    document.body.appendChild(overlay);
-    document.body.classList.add('modal-open');
-
-    const closeButton = overlay.querySelector('.expense-close');
-
-    function close() {
-      if (!overlay.isConnected) return;
-      overlay.remove();
-      document.body.classList.remove('modal-open');
-      document.removeEventListener('keydown', onKey);
-      window.removeEventListener('hashchange', close);
-      const entry = app.querySelector('[data-movie-archive="' + scope + '"]');
-      if (entry) entry.focus();
-    }
-
-    function onKey(event) {
-      if (event.key === 'Escape') { event.preventDefault(); close(); }
-    }
-
-    closeButton.addEventListener('click', close);
-    overlay.addEventListener('click', function (event) {
-      if (event.target === overlay) close();
-    });
-    document.addEventListener('keydown', onKey);
-    window.addEventListener('hashchange', close);
-    closeButton.focus();
+    return '<button type="button" class="expense-entry film-entry' +
+      (count ? ' has-movies' : '') + '" data-movies-open data-movie-scope="' + scope +
+      '" aria-haspopup="dialog" title="' + label + ' · ' + count + ' 部 · 打开找电影' +
+      '" aria-label="' + label + '，' + count + ' 部，打开找电影">' + FILM_ICON + '</button>';
   }
 
   function wireMovieEntry(year, month, day) {
     const button = app.querySelector('[data-movies-open]');
     if (!button) return;
     button.addEventListener('click', function () {
-      openMovieModal(year, month, day);
+      openMovieModal(year, month, day, button.dataset.movieScope || '');
     });
     warmMovieLibrary();
   }
 
-  function openMovieModal(year, month, day) {
+  function openMovieModal(year, month, day, scope) {
     if (document.querySelector('.expense-modal')) return;
+    // 月 / 年入口带 scope：弹层默认打开「看过」清单，并按 added 日期收窄到该月 / 年。
+    const scopeName = scope === 'month' || scope === 'year' ? scope : '';
+    const scopePeriod = scopeName === 'month' ? year + '-' + pad2(month)
+      : scopeName === 'year' ? year + '-' : '';
+    const scopeLabel = scopeName === 'month' ? '本月看过的电影'
+      : scopeName === 'year' ? '本年看过的电影' : '';
+    let scopeOn = !!scopePeriod;
     // 每次打开都先合并两个片源留下的重复收藏，保证清单里一部片只有一条。
     if (dedupeLibrary()) markDirty();
-    const node = dayNode(year, month, day, true);
     const filters = {
       genre: '全部', region: '全部', decade: '全部', rating: '全部',
       sort: 'popularity.desc', query: ''
@@ -2860,7 +2791,7 @@
     // 右上角条目跳转跟随当前条目所属片源：IMDb 条目给 IMDb 徽标，TMDB 条目给 TMDB 徽标。
     // 两个片源用同一套详情排版，不再只给 TMDB 做跳转。
     function renderDetailBadge(id, title) {
-      const link = detail.querySelector('.detail-douban');
+      const link = detail.querySelector('.detail-source');
       if (!link) return;
       const isImdb = /^tt\d{3,}$/.test(String(id || ''));
       const name = title || id;
@@ -3022,9 +2953,6 @@
           (movie.homepage
             ? '<a class="btn fiche-link" href="' + esc(movie.homepage) +
               '" target="_blank" rel="noopener noreferrer">官方网站 ↗</a>' : '') +
-          '<a class="btn fiche-link" href="' + esc(MovieSource.doubanSearchUrl(movie.title)) +
-          '" target="_blank" rel="noopener noreferrer">去豆瓣搜《' +
-          esc(movie.title) + '》</a>' +
           '</div></aside></div></article>';
       }).catch(function (error) {
         if (detail.hidden) return;
@@ -3047,9 +2975,12 @@
     overlay.innerHTML =
       '<div class="expense-sheet movie-sheet">' +
       '<div class="movie-head"><div class="movie-head-title">' +
-      '<p class="eyebrow">找电影</p>' +
-      '<h2 id="movie-title">今天想看点什么？</h2>' +
-      '<p class="sub">' + year + ' 年 ' + month + ' 月 ' + day + ' 日 ·<span id="movie-source-note">正在连接片库…</span></p>' +
+      '<p class="eyebrow">' + (scopeName ? '找电影 · 与日页面共用' : '找电影') + '</p>' +
+      '<h2 id="movie-title">' + (scopeName ? scopeLabel : '今天想看点什么？') + '</h2>' +
+      '<p class="sub">' + (scopeName
+        ? year + ' 年' + (month ? ' ' + month + ' 月' : '') + ' · 按「看过」标记日期归档 · '
+        : year + ' 年 ' + month + ' 月 ' + day + ' 日 · ') +
+      '<span id="movie-source-note">正在连接片库…</span></p>' +
       '</div><div class="movie-head-actions">' +
       '<div class="movie-source-switch" role="group" aria-label="选择片源">' +
       '<button type="button" class="movie-source-btn" data-src="tmdb" aria-pressed="false" ' +
@@ -3130,7 +3061,7 @@
       '</div>' +
       '<div class="movie-detail" id="movie-detail" hidden>' +
       '<div class="detail-bar"><button type="button" class="detail-back" data-detail-close>← 返回片库</button>' +
-      '<a class="detail-douban" href="https://www.themoviedb.org/" target="_blank" rel="noopener noreferrer" ' +
+      '<a class="detail-source" href="https://www.themoviedb.org/" target="_blank" rel="noopener noreferrer" ' +
       'aria-label="在片源网站打开这个条目"></a></div>' +
       '<div class="detail-body" id="movie-detail-body"></div>' +
       '</div>' +
@@ -3456,7 +3387,10 @@
       const decade = MOVIE_DECADES.filter(function (item) {
         return item.label === filters.decade;
       })[0] || {};
+      const scopedPeriod = scopeOn && libraryKind === 'watched' ? scopePeriod : '';
       const base = collectionList(libraryKind).filter(function (item) {
+        if (scopedPeriod &&
+          (typeof item.added !== 'string' || item.added.indexOf(scopedPeriod) !== 0)) return false;
         if (filters.genre !== '全部' && (item.genres || []).indexOf(filters.genre) < 0) return false;
         if (!regionMatches(item, filters.region)) return false;
         const minRating = RATING_MIN[filters.rating] || 0;
@@ -3502,19 +3436,37 @@
       }
       const all = collectionList(libraryKind).slice();
       const isWish = libraryKind === 'wish';
-      const name = isWish ? '想看的电影' : '看过的电影';
-      if (!all.length) {
-        libraryEl.innerHTML = '<p class="movie-empty">' + (isWish
-          ? '还没有想看的电影 · 在上方点「＋ 想看」把片子存进来。'
-          : '还没有看过的电影 · 在上方点「＋ 看过」记录一下。') + '</p>';
+      const scoped = scopeOn && !isWish && !!scopePeriod;
+      const name = scoped ? scopeLabel : isWish ? '想看的电影' : '看过的电影';
+      const pool = scoped ? all.filter(function (item) {
+        return typeof item.added === 'string' && item.added.indexOf(scopePeriod) === 0;
+      }) : all;
+      function scopeBarHtml(countHtml) {
+        return '<div class="movie-scope-bar"><p class="movie-count">' + name + ' ' +
+          countHtml + '</p>' +
+          '<button type="button" class="movie-scope-clear" data-scope-clear>查看全部看过</button></div>';
+      }
+      if (!pool.length) {
+        libraryEl.innerHTML = (scoped ? scopeBarHtml('<b>0</b> 部') : '') +
+          '<p class="movie-empty">' + (scoped
+          ? (scopeName === 'month' ? '这个月' : '这一年') +
+            '还没有标记看过的电影 · 在上方点「＋ 看过」记录一下。'
+          : isWish
+            ? '还没有想看的电影 · 在上方点「＋ 想看」把片子存进来。'
+            : '还没有看过的电影 · 在上方点「＋ 看过」记录一下。') + '</p>' +
+          (scoped ? '<p class="movie-note movie-hint">' +
+            '看完一部片后，在日页面或这里的「找电影」里点「＋ 看过」，' +
+            '它就会按标记日期归到对应的月份和年份。</p>' : '');
         return;
       }
       const narrowed = filtersActive();
       const list = sortLibrary(libraryFiltered());
       const count = narrowed
-        ? '<b>' + list.length + '</b> / ' + all.length + ' 部'
-        : '<b>' + all.length + '</b> 部';
-      let html = '<p class="movie-count">' + name + ' ' + count + '</p>';
+        ? '<b>' + list.length + '</b> / ' + pool.length + ' 部'
+        : '<b>' + pool.length + '</b> 部';
+      let html = scoped
+        ? scopeBarHtml(count)
+        : '<p class="movie-count">' + name + ' ' + count + '</p>';
       const searching = filters.query.trim() && titleIndex.query === filters.query.trim();
       if (searching && titleIndex.loading) {
         html += '<p class="movie-note">正在按中英文片名互相匹配…</p>';
@@ -3564,6 +3516,8 @@
       renderLibraryButtons();
       applySortOptions();
       countEl.hidden = false;
+      // 从月 / 年入口进来时，推荐流还没有取过；这里再补上，避免关掉清单后空白。
+      if (!feed.items.length && !feed.loading) resetFeed(takeStartPage());
       scrollEl.scrollTop = 0;
       renderStatus();
     }
@@ -3963,6 +3917,13 @@
         return;
       }
 
+      const scopeClear = event.target.closest('[data-scope-clear]');
+      if (scopeClear) {
+        scopeOn = false;
+        renderLibraryView();
+        return;
+      }
+
       const mark = event.target.closest('[data-mark]');
       if (mark) {
         const id = mark.dataset.id;
@@ -4075,6 +4036,8 @@
 
     applySortOptions();
     syncSourceButtons();
+    // 月 / 年入口一打开就是该期间的「看过」清单；本地 MD 数据，断网也能看。
+    if (scopeName) openLibrary('watched');
     // 没有 Key 也能直接用（Cinemeta 英文片库），所以这里总是先探测再加载；
     // 只有两个源都失败时才把 Key 面板露出来。
     MovieSource.online().then(function (available) {
@@ -4082,17 +4045,23 @@
       feed.online = available;
       updateSourceNote();
       if (available) {
-        resetFeed(takeStartPage());
+        // 清单已经占据屏幕时先不请求推荐流，等用户切回去再加载。
+        if (!scopeName || !libraryKind) resetFeed(takeStartPage());
         repairLibrary(4);
         upgradeLibraryIdentity(4);
         completeMissingImdb(6);
         bridgeLibraryIds(6);
       } else {
         renderStatus();
-        showKeyPanel(true);
+        if (!scopeName) showKeyPanel(true);
       }
     });
-    searchInput.focus();
+    if (scopeName) {
+      const watchedTab = overlay.querySelector('[data-lib="watched"]');
+      if (watchedTab) watchedTab.focus();
+    } else {
+      searchInput.focus();
+    }
   }
 
 
