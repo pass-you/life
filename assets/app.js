@@ -3137,9 +3137,9 @@
     // TMDB 的 w342 海报可以换成更贴卡片宽度的尺寸；手机两列时 w185 足够，
     // 省一半流量也更快出图。其它片源（Cinemeta 等）保持原地址。
     function posterSrcset(src) {
-      const hit = /^(https:\/\/image\.tmdb\.org\/t\/p\/)w342(\/.+)$/.exec(src);
+      const hit = /^(https:\/\/image\.tmdb\.org\/t\/p\/)w\d{3}(\/.+)$/.exec(src);
       if (!hit) return '';
-      return hit[1] + 'w185' + hit[2] + ' 185w, ' + src + ' 342w, ' +
+      return hit[1] + 'w185' + hit[2] + ' 185w, ' + hit[1] + 'w342' + hit[2] + ' 342w, ' +
         hit[1] + 'w500' + hit[2] + ' 500w';
     }
 
