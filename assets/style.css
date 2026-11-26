@@ -3799,6 +3799,69 @@ body.modal-open {
   padding-bottom: 18px;
 }
 
+/* 标题右侧的片数统计：一眼看出这段时间看了多少部。 */
+.movie-count {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 12px;
+  padding: 1px 12px 2px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-family: var(--font-sans);
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.7;
+  letter-spacing: 0.02em;
+  vertical-align: 3px;
+}
+
+/* 右上角「生成海报」入口。 */
+.movie-poster-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 34px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--surface);
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  transition: border-color 0.18s ease, color 0.18s ease,
+    background 0.18s ease, transform 0.18s ease;
+}
+
+.movie-poster-btn svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.movie-poster-btn:hover:not(:disabled) {
+  border-color: var(--accent-line);
+  background: var(--accent-ghost);
+  color: var(--accent-ink);
+  transform: translateY(-1px);
+}
+
+.movie-poster-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.movie-poster-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 @media (max-width: 720px) {
   .movie-head {
     padding: 16px 16px 10px;
@@ -4000,6 +4063,149 @@ body.modal-open {
 
   .fiche-links {
     gap: 8px;
+  }
+}
+
+/* ---------------- 观看海报预览 ---------------- */
+
+.poster-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(38, 30, 33, 0.55);
+  backdrop-filter: blur(6px);
+  animation: posterFade 0.18s ease both;
+}
+
+@keyframes posterFade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.poster-panel {
+  display: flex;
+  flex-direction: column;
+  width: min(980px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow: hidden;
+  border-radius: 22px;
+  background: var(--surface);
+  box-shadow: 0 28px 70px -30px rgba(40, 25, 30, 0.6);
+}
+
+.poster-bar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 20px 24px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.poster-bar h2 {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: 22px;
+  font-weight: 500;
+  line-height: 1.25;
+}
+
+.poster-sub {
+  margin: 3px 0 0;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.poster-stage {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 20px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  background: linear-gradient(180deg, var(--accent-ghost), transparent 240px);
+}
+
+.poster-preview {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  height: auto;
+  border-radius: 10px;
+  box-shadow: 0 18px 40px -22px rgba(50, 32, 38, 0.55);
+}
+
+.poster-note {
+  margin: auto;
+  padding: 40px 0;
+  font-size: 13px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.poster-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 24px;
+  border-top: 1px solid var(--line);
+}
+
+.poster-hint {
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.poster-actions {
+  display: flex;
+  gap: 8px;
+}
+
+@media (max-width: 720px) {
+  .poster-modal {
+    padding: 0;
+  }
+
+  .poster-panel {
+    width: 100%;
+    height: 100%;
+    max-height: none;
+    border-radius: 0;
+  }
+
+  .poster-bar {
+    padding: 16px;
+  }
+
+  .poster-stage {
+    padding: 14px;
+  }
+
+  .poster-foot {
+    padding: 12px 16px;
+  }
+
+  .movie-count {
+    margin-left: 8px;
+    padding: 1px 10px 2px;
+    font-size: 12.5px;
+  }
+
+  .movie-poster-btn {
+    width: 34px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .movie-poster-btn span {
+    display: none;
   }
 }
 

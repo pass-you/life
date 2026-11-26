@@ -446,6 +446,14 @@
     '<path d="M7.6 5.5v13M16.4 5.5v13M3.6 9h4M3.6 15h4M16.4 9h4M16.4 15h4"/>' +
     '</svg>';
 
+  // 归档页右上角「生成海报」的图片图标。
+  const POSTER_ICON =
+    '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">' +
+    '<rect x="3" y="4" width="18" height="16" rx="2.6"/>' +
+    '<path d="M3.4 15.6l4.4-4.3 3.1 3 3.2-3.4 6.5 6.2"/>' +
+    '<circle cx="9.1" cy="8.4" r="1.5"/>' +
+    '</svg>';
+
   // 日页面「找电影」入口的计数：导入 MD 后也要立刻反映去重后的唯一片数。
   let movieLibraryRefresh = null;
 
@@ -2675,8 +2683,11 @@
     overlay.innerHTML =
       '<div class="expense-sheet movie-sheet">' +
       '<div class="movie-head"><div class="movie-head-title">' +
-      '<h2 id="movie-title">' + title + '</h2>' +
+      '<h2 id="movie-title">' + title +
+      '<span class="movie-count" data-movie-count>0 部</span></h2>' +
       '</div><div class="movie-head-actions">' +
+      '<button type="button" class="movie-poster-btn" data-poster-open disabled>' +
+      POSTER_ICON + '<span>生成海报</span></button>' +
       '<button type="button" class="expense-close movie-close" aria-label="关闭">×</button>' +
       '</div></div>' +
       '<div class="movie-scroll" id="movie-scroll">' +
@@ -2720,6 +2731,16 @@
       grid.innerHTML = list.length
         ? list.map(archiveCard).join('')
         : '<p class="movie-empty">' + empty + '</p>';
+      // 标题右侧的片数统计与右上角「生成海报」按钮跟着清单一起更新。
+      const count = overlay.querySelector('[data-movie-count]');
+      if (count) count.textContent = list.length + ' 部';
+      const posterButton = overlay.querySelector('[data-poster-open]');
+      if (posterButton) {
+        posterButton.disabled = !list.length;
+        posterButton.title = list.length
+          ? '把 ' + list.length + ' 张海报拼成一张长图，可导出 PNG / JPG / PDF'
+          : '还没有标记看过的电影';
+      }
     }
 
     function closeDetailView() {
@@ -2745,6 +2766,27 @@
       else close();
     }
 
+    // 右上角「生成海报」：把这段时间标记看过的海报拼成一张长图，
+    // 主题色跟随当前设置，导出格式 PNG / JPG / PDF 由海报面板提供。
+    function openPoster() {
+      const list = watchedArchive(year, month);
+      if (!list.length || !window.MoviePoster) return;
+      const accent = (getComputedStyle(document.documentElement)
+        .getPropertyValue('--accent') || '#e26a8d').trim();
+      const now = new Date();
+      const stamp = now.getFullYear() + '.' + pad2(now.getMonth() + 1) + '.' +
+        pad2(now.getDate());
+      MoviePoster.open({
+        items: list,
+        title: (scope === 'month' ? year + '年 ' + month + '月' : year + '年') +
+          '看过的电影',
+        fileBase: (scope === 'month' ? year + '-' + pad2(month) : String(year)) +
+          '-看过的电影',
+        accent: accent,
+        stamp: '导出于 ' + stamp
+      });
+    }
+
     // 详情里的「想看 / 看过」与日页面一样可切换；切换后清单和月 / 年入口计数立刻跟着变。
     function syncMarks(movie) {
       Array.prototype.forEach.call(detailBody.querySelectorAll('[data-mark]'), function (button) {
@@ -2767,6 +2809,10 @@
       }
       if (event.target.closest('[data-detail-close]')) {
         closeDetailView();
+        return;
+      }
+      if (event.target.closest('[data-poster-open]')) {
+        openPoster();
         return;
       }
       const mark = event.target.closest('[data-mark]');
