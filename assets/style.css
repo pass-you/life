@@ -3794,6 +3794,28 @@ body.modal-open {
   color: var(--muted);
 }
 
+/* 月 / 年页面「看过的电影」归档：只读网格，海报和片名都直接去豆瓣。 */
+.archive-sheet {
+  width: min(880px, 100%);
+}
+
+.archive-grid {
+  margin-top: 18px;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+}
+
+.archive-sheet .movie-empty {
+  padding: 54px 12px;
+  line-height: 1.7;
+}
+
+@media (max-width: 720px) {
+  .archive-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px 12px;
+  }
+}
+
 @media (max-width: 720px) {
   .movie-head {
     padding: 16px 16px 10px;

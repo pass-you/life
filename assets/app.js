@@ -439,6 +439,13 @@
     normalizeTagList, normalizeCollectionItem, parseMovieLine, parseMovieLines, movieRecordLine
   } = window.FilmRecord;
 
+  // 日 / 月 / 年页面共用的胶片图标。
+  const FILM_ICON =
+    '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">' +
+    '<rect x="3" y="5.5" width="18" height="13" rx="2.4"/>' +
+    '<path d="M7.6 5.5v13M16.4 5.5v13M3.6 9h4M3.6 15h4M16.4 9h4M16.4 15h4"/>' +
+    '</svg>';
+
   // 日页面「找电影」入口的计数：导入 MD 后也要立刻反映去重后的唯一片数。
   let movieLibraryRefresh = null;
 
@@ -1671,6 +1678,7 @@
       ' 天 · 已记录 ' + recorded + ' 天</p></div>' +
       '<div class="chapter-actions">' +
       '<a class="btn" href="#/years">全部年份</a>' +
+      watchedEntryMarkup('year', year) +
       '<button type="button" class="expense-entry' +
       (yearIncome > 0 || yearExpense > 0 ? ' has-expenses' : '') +
       '" data-year-finance aria-haspopup="dialog" title="年度收支 · 净收入 ' + formatCents(yearNet) +
@@ -1699,6 +1707,7 @@
     }, 260, '这一年想完成什么？想成为怎样的人？写下几件最重要的事。');
 
     wireYearFinanceEntry(year);
+    wireMovieArchive('year', year);
     wireReview('year', year);
   }
 
@@ -1938,6 +1947,7 @@
       '<p class="sub">' + total + ' 天 · 已记录 ' + recorded + ' 天</p></div>' +
       '<div class="chapter-actions">' +
       '<a class="btn" href="#/' + year + '">本年</a>' +
+      watchedEntryMarkup('month', year, month) +
       '<button type="button" class="expense-entry' +
       (monthIncome > 0 || monthExpense > 0 ? ' has-expenses' : '') +
       '" data-month-finance aria-haspopup="dialog" title="本月收支 · 净收入 ' + formatCents(monthNet) +
@@ -1968,6 +1978,7 @@
     }, 240, '这个月的重点是什么？想在哪些事情上保持节奏？');
 
     wireMonthFinanceEntry(year, month);
+    wireMovieArchive('month', year, month);
     wireReview('month', year, month);
   }
 
@@ -2015,10 +2026,7 @@
       '" data-movies-open aria-haspopup="dialog" title="找电影 · 想看 ' + movies.wish +
       ' 部 · 看过 ' + movies.watched + ' 部' +
       '" aria-label="找电影，想看 ' + movies.wish + ' 部，看过 ' + movies.watched + ' 部">' +
-      '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">' +
-      '<rect x="3" y="5.5" width="18" height="13" rx="2.4"/>' +
-      '<path d="M7.6 5.5v13M16.4 5.5v13M3.6 9h4M3.6 15h4M16.4 9h4M16.4 15h4"/>' +
-      '</svg></button>' +
+      FILM_ICON + '</button>' +
       '<button type="button" class="expense-entry' + (expenseTotal > 0 ? ' has-expenses' : '') +
       '" data-expense-open aria-haspopup="dialog" title="记账 · ' + formatCents(expenseTotal) +
       '" aria-label="记账，今日支出 ' + formatCents(expenseTotal) + '">¥</button>' +
@@ -2368,6 +2376,119 @@
     };
     if ('requestIdleCallback' in window) requestIdleCallback(start, { timeout: 2500 });
     else setTimeout(start, 800);
+  }
+
+  /* ---------------- 月 / 年页面的电影归档 ---------------- */
+
+  // 「看过」记录在 MD 里带 added（标记看过的那天）。月页 / 年页按这一天归档；
+  // 旧文件里缺少 added 的条目在导入时会按导入当天补上（addToCollection 的既有行为）。
+  function watchedArchive(year, month) {
+    const prefix = month ? year + '-' + pad2(month) : year + '-';
+    return uniqueFilms(collectionList('watched')).filter(function (item) {
+      return typeof item.added === 'string' && item.added.indexOf(prefix) === 0;
+    }).sort(function (a, b) {
+      return String(b.added || '').localeCompare(String(a.added || '')) ||
+        (b.rating || 0) - (a.rating || 0);
+    });
+  }
+
+  function watchedEntryMarkup(scope, year, month) {
+    const count = watchedArchive(year, month).length;
+    const label = scope === 'month' ? '本月看过的电影' : '本年看过的电影';
+    return '<button type="button" class="expense-entry film-entry archive-entry' +
+      (count ? ' has-movies' : '') + '" data-movie-archive="' + scope +
+      '" aria-haspopup="dialog" title="' + label + ' · ' + count + ' 部' +
+      '" aria-label="' + label + '，' + count + ' 部">' + FILM_ICON + '</button>';
+  }
+
+  function wireMovieArchive(scope, year, month) {
+    const button = app.querySelector('[data-movie-archive="' + scope + '"]');
+    if (!button) return;
+    button.addEventListener('click', function () {
+      openArchiveModal(scope, year, month);
+    });
+  }
+
+  // 归档弹窗只读：海报与片名都直接跳到豆瓣搜索，不在这里标记收藏，
+  // 避免和日页面的找电影流程出现两种状态入口。
+  function openArchiveModal(scope, year, month) {
+    if (document.querySelector('.expense-modal')) return;
+    const list = watchedArchive(year, month);
+    const title = scope === 'month' ? year + ' 年 ' + month + ' 月' : year + ' 年';
+    const label = scope === 'month' ? '本月看过的电影' : '本年看过的电影';
+    const rangeText = scope === 'month' ? '本月' : '本年';
+
+    const cards = list.map(function (item) {
+      const link = MovieSource.doubanSearchUrl(item.title);
+      // 旧豆瓣海报已被对方站点按外链 403，宁可显示文字占位，也不放一张破图。
+      const cover = item.cover && !/(^|\/\/)[^/]*douban(?:io)?\.com\//i.test(item.cover)
+        ? MovieSource.poster(item.cover)
+        : '';
+      const meta = [item.year, item.added ? item.added + ' 看过' : '']
+        .filter(Boolean).join(' · ');
+      return '<article class="movie-card archive-card">' +
+        '<a class="movie-poster' + (cover ? '' : ' is-plain') + '" href="' + esc(link) +
+        '" target="_blank" rel="noopener noreferrer" aria-label="在豆瓣搜索《' +
+        esc(item.title) + '》">' +
+        (cover
+          ? '<img class="movie-poster-img" src="' + esc(cover) +
+            '" alt="" loading="lazy" decoding="async">'
+          : '') +
+        '<span class="movie-poster-fallback">' + esc(item.title.slice(0, 4)) + '</span>' +
+        (item.rating ? '<span class="movie-score">' + item.rating.toFixed(1) + '</span>' : '') +
+        '</a>' +
+        '<div class="movie-body"><h3 class="movie-name">' +
+        '<a href="' + esc(link) + '" target="_blank" rel="noopener noreferrer">' +
+        esc(item.title) + '</a></h3>' +
+        '<p class="movie-meta">' + esc(meta) + '</p></div></article>';
+    }).join('');
+
+    const overlay = document.createElement('div');
+    overlay.className = 'expense-modal archive-modal';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-labelledby', 'archive-title');
+    overlay.innerHTML =
+      '<div class="expense-sheet archive-sheet">' +
+      '<div class="expense-head"><div>' +
+      '<p class="eyebrow">' + label + '</p>' +
+      '<h2 id="archive-title">' + title + '</h2>' +
+      '<p class="sub">' + (list.length
+        ? rangeText + '标记看过 ' + list.length + ' 部'
+        : rangeText + '还没有看过的电影') + '</p></div>' +
+      '<button type="button" class="expense-close" aria-label="关闭' + label + '">×</button></div>' +
+      (list.length
+        ? '<div class="movie-grid archive-grid">' + cards + '</div>'
+        : '<p class="movie-empty">在日页面点胶片图标，把看完的片标成「看过」，' +
+          '它就会按标记日期出现在这里。</p>') +
+      '</div>';
+
+    document.body.appendChild(overlay);
+    document.body.classList.add('modal-open');
+
+    const closeButton = overlay.querySelector('.expense-close');
+
+    function close() {
+      if (!overlay.isConnected) return;
+      overlay.remove();
+      document.body.classList.remove('modal-open');
+      document.removeEventListener('keydown', onKey);
+      window.removeEventListener('hashchange', close);
+      const entry = app.querySelector('[data-movie-archive="' + scope + '"]');
+      if (entry) entry.focus();
+    }
+
+    function onKey(event) {
+      if (event.key === 'Escape') { event.preventDefault(); close(); }
+    }
+
+    closeButton.addEventListener('click', close);
+    overlay.addEventListener('click', function (event) {
+      if (event.target === overlay) close();
+    });
+    document.addEventListener('keydown', onKey);
+    window.addEventListener('hashchange', close);
+    closeButton.focus();
   }
 
   function wireMovieEntry(year, month, day) {
