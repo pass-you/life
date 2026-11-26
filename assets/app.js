@@ -101,28 +101,48 @@
     for (let i = 0; i < count; i += 1) {
       let style;
       if (type === 'snow') {
-        const near = Math.random() < 0.14;
-        const size = near ? 12 + Math.random() * 6 : 5 + Math.random() * 5;
-        const duration = 7 + Math.random() * 7;
+        // 三层景深：远层细碎慢落，中层常规，近层大朵虚化扫过，营造大雪纷飞。
+        const roll = Math.random();
+        const layer = roll < 0.4 ? 0 : roll < 0.82 ? 1 : 2;
+        const size = layer === 0 ? 3 + Math.random() * 3
+          : layer === 1 ? 7 + Math.random() * 5
+            : 15 + Math.random() * 12;
+        const duration = layer === 0 ? 9 + Math.random() * 4
+          : layer === 1 ? 6 + Math.random() * 3.5
+            : 3.6 + Math.random() * 2.4;
+        const swayX = layer === 0 ? 8 + Math.random() * 8
+          : layer === 1 ? 16 + Math.random() * 14
+            : 26 + Math.random() * 20;
         style = '--x:' + (Math.random() * 100).toFixed(1) + '%;' +
-          '--delay:-' + (Math.random() * 10).toFixed(2) + 's;' +
+          '--delay:-' + (Math.random() * 14).toFixed(2) + 's;' +
           '--dur:' + duration.toFixed(2) + 's;' +
-          '--sway:' + (duration * 0.55).toFixed(2) + 's;' +
-          '--spin:' + (12 + Math.random() * 12).toFixed(1) + 's;' +
+          '--sway:' + (duration * (0.4 + Math.random() * 0.35)).toFixed(2) + 's;' +
+          '--swayX:' + swayX.toFixed(1) + 'px;' +
+          '--swayDelay:-' + (Math.random() * 12).toFixed(2) + 's;' +
+          '--spin:' + (layer === 2 ? 8 + Math.random() * 7 : 18 + Math.random() * 14).toFixed(1) + 's;' +
           '--size:' + size.toFixed(1) + 'px;' +
-          '--blur:' + (near ? 1.8 : 0).toFixed(1) + 'px;' +
-          '--o:' + (near ? 0.45 + Math.random() * 0.15 : 0.8 + Math.random() * 0.2).toFixed(2) + ';';
+          '--blur:' + (layer === 0 ? 0.5 : layer === 1 ? 0.3 : 1.5 + Math.random() * 1.2).toFixed(1) + 'px;' +
+          '--o:' + (layer === 0 ? 0.5 + Math.random() * 0.25
+            : layer === 1 ? 0.8 + Math.random() * 0.15
+              : 0.45 + Math.random() * 0.22).toFixed(2) + ';';
       } else {
-        const near = type === 'nearRain';
-        const width = near ? 1.5 + Math.random() * 1.1 : 0.7 + Math.random() * 0.4;
-        const height = near ? 22 + Math.random() * 16 : 10 + Math.random() * 6;
-        const duration = near ? 0.5 + Math.random() * 0.3 : 1.4 + Math.random() * 0.5;
+        const storm = type.indexOf('storm') === 0;
+        const near = type === 'nearRain' || type === 'stormNear';
+        const width = near ? (storm ? 2.2 + Math.random() * 1.4 : 1.5 + Math.random() * 1.1)
+          : (storm ? 0.9 + Math.random() * 0.5 : 0.7 + Math.random() * 0.4);
+        const height = near ? (storm ? 30 + Math.random() * 22 : 22 + Math.random() * 16)
+          : (storm ? 14 + Math.random() * 8 : 10 + Math.random() * 6);
+        const duration = near ? (storm ? 0.34 + Math.random() * 0.2 : 0.5 + Math.random() * 0.3)
+          : (storm ? 1 + Math.random() * 0.4 : 1.4 + Math.random() * 0.5);
+        const wind = near ? (storm ? 110 + Math.random() * 50 : 60 + Math.random() * 30)
+          : (storm ? 70 + Math.random() * 40 : 40 + Math.random() * 30);
         style = '--x:' + (Math.random() * 100).toFixed(1) + '%;' +
           '--delay:-' + (Math.random() * 8).toFixed(2) + 's;' +
           '--dur:' + duration.toFixed(2) + 's;' +
           '--w:' + width.toFixed(1) + 'px;' +
           '--h:' + height.toFixed(1) + 'px;' +
-          '--o:' + (near ? 0.55 + Math.random() * 0.3 : 0.25 + Math.random() * 0.2).toFixed(2) + ';';
+          '--wind:' + wind.toFixed(0) + 'px;' +
+          '--o:' + (near ? 0.6 + Math.random() * 0.3 : 0.28 + Math.random() * 0.22).toFixed(2) + ';';
       }
       out += '<span style="' + style + '"></span>';
     }
@@ -165,10 +185,13 @@
     stormTimer = setTimeout(function () {
       const overlay = document.getElementById('weather-overlay');
       if (!overlay || overlay.hidden || overlay.dataset.weather !== 'storm') return;
+      // 每次击中换个位置与角度，避免闪电重复出现在同一点。
+      overlay.style.setProperty('--bolt-x', (18 + Math.random() * 64).toFixed(1) + '%');
+      overlay.style.setProperty('--bolt-rot', (-16 + Math.random() * 32).toFixed(1) + 'deg');
       overlay.classList.add('is-striking');
       window.setTimeout(function () { overlay.classList.remove('is-striking'); }, 900);
       scheduleStormStrike(false);
-    }, first ? 2500 + Math.random() * 2000 : 5000 + Math.random() * 3000);
+    }, first ? 1600 + Math.random() * 1400 : 2600 + Math.random() * 2400);
   }
 
   function sceneSnowFeatures() {
@@ -191,6 +214,7 @@
         '--delay:' + delay + 's;' +
         '--dur:' + duration.toFixed(1) + 's;' +
         '--sway:' + (duration * 0.3).toFixed(1) + 's;' +
+        '--swayX:' + (16 + Math.random() * 14).toFixed(1) + 'px;' +
         '--spin:' + (16 + Math.random() * 10).toFixed(1) + 's">' + flake + '</i>';
     }
     return out + '</div>';
@@ -226,21 +250,21 @@
     } else if (key === 'heavyRain') {
       html += sceneClouds(3) +
         '<div class="scene-rain">' +
-        '<div class="rain-far">' + sceneParticles(sceneCount(70), 'farRain') + '</div>' +
-        '<div class="rain-near">' + sceneParticles(sceneCount(48), 'nearRain') + '</div>' +
-        '</div>' + sceneSplashes(sceneCount(24), true);
+        '<div class="rain-far">' + sceneParticles(sceneCount(96), 'farRain') + '</div>' +
+        '<div class="rain-near">' + sceneParticles(sceneCount(64), 'nearRain') + '</div>' +
+        '</div>' + sceneSplashes(sceneCount(30), true);
     } else if (key === 'storm') {
       html += sceneClouds(3) +
         '<div class="scene-rain">' +
-        '<div class="rain-far">' + sceneParticles(sceneCount(110), 'farRain') + '</div>' +
-        '<div class="rain-near">' + sceneParticles(sceneCount(70), 'nearRain') + '</div>' +
-        '</div>' + sceneSplashes(sceneCount(32), true) +
+        '<div class="rain-far">' + sceneParticles(sceneCount(150), 'stormFar') + '</div>' +
+        '<div class="rain-near">' + sceneParticles(sceneCount(100), 'stormNear') + '</div>' +
+        '</div>' + sceneSplashes(sceneCount(40), true) +
         '<svg class="scene-lightning" viewBox="0 0 40 60" aria-hidden="true">' +
         '<path d="M22 4 10 31h8l-3 22 13-27h-7l1-22"/></svg>' +
         '<div class="scene-flash"></div>';
     } else if (key === 'snow') {
-      html += sceneClouds(2) + '<div class="scene-snow">' +
-        sceneParticles(sceneCount(100), 'snow') + sceneSnowFeatures() + '</div>';
+      html += sceneClouds(3) + '<div class="scene-snow">' +
+        sceneParticles(sceneCount(170), 'snow') + sceneSnowFeatures() + '</div>';
     } else if (key === 'fog') {
       html += sceneClouds(1) +
         '<div class="scene-fog"><span></span><span></span><span></span></div>';
