@@ -1211,6 +1211,8 @@
       // 否则重开页面后清单为空，下一次写入会把文件里的收藏覆盖掉。
       state.library = parsed.library || { wish: [], watched: [] };
       if (parsed.color) state.color = parsed.color;
+      // Key 是文件内容的一部分：换浏览器打开同一个 MD 就能直接找电影。
+      if (parsed.tmdbKey && window.MovieSource) MovieSource.restoreKey(parsed.tmdbKey);
       applyTheme(state.color);
     }
 
@@ -3184,7 +3186,7 @@
       '<p class="movie-keytitle" id="movie-key-title">可选：用 TMDB Key 切到中文片库</p>' +
       '<p class="movie-keytext" id="movie-key-text">不填也能用——当前是 Cinemeta 的英文全量片库（免 Key）。填一个免费的 TMDB ' +
       '<b>API Key (v3 auth)</b> 后，片名、简介、类型都会变成中文，筛选也更精确。' +
-      'Key 只存在这台浏览器里，不会写进 MD 文件。</p>' +
+      'Key 会随日历 MD 文件一起保存，换浏览器导入同一个文件即可恢复；分享文件前请先清除 Key。</p>' +
       '<div class="movie-keyrow">' +
       '<input id="movie-key-input" type="text" spellcheck="false" autocomplete="off" ' +
       'aria-label="TMDB API Key" placeholder="粘贴 TMDB API Key">' +
@@ -3330,12 +3332,12 @@
       if (state.hasKey) {
         keyText.innerHTML = '已保存 Key（末尾 <b>' + esc(state.keyTail) + '</b>），当前片源是 <b>' +
           (state.provider === 'tmdb' ? 'TMDB 中文库' : 'Cinemeta 英文片库（免 Key）') + '</b>。' +
-          '可以在上面的两个按钮之间随时切换；Key 只存在这台浏览器里，不会写进 MD 文件。';
+          '可以在上面的两个按钮之间随时切换；Key 会随日历 MD 文件一起保存，换浏览器导入即可恢复，分享文件前请先清除。';
         keyInput.placeholder = '已保存（末尾 ' + state.keyTail + '），粘贴新 Key 可替换';
       } else {
         keyText.innerHTML = '不填也能用——当前是 Cinemeta 的英文全量片库（免 Key）。填一个免费的 TMDB ' +
           '<b>API Key (v3 auth)</b> 后，片名、简介、类型都会变成中文，筛选也更精确。' +
-          'Key 只存在这台浏览器里，不会写进 MD 文件。';
+          'Key 会随日历 MD 文件一起保存，换浏览器导入同一个文件即可恢复。';
         keyInput.placeholder = '粘贴 TMDB API Key（API Key (v3 auth)）';
       }
     }
@@ -3364,6 +3366,8 @@
         return;
       }
       MovieSource.setKey(value);
+      // Key 也是日历文件内容的一部分，立即排一次同步。
+      markDirty();
       keyInput.value = '';
       keyHint.textContent = '正在验证…';
       feed.online = null;
@@ -3429,6 +3433,8 @@
     overlay.querySelector('#movie-key-save').addEventListener('click', saveKey);
     keyClear.addEventListener('click', function () {
       MovieSource.setKey('');
+      // 文件头部同步去掉 Key 行。
+      markDirty();
       keyHint.textContent = '已清除 Key，回到 Cinemeta 英文片库。';
       feed.online = null;
       updateSourceNote();
@@ -4271,11 +4277,20 @@
       '',
       '> 此文件由「人生日历」生成，可直接导入网站恢复记录。',
       '',
-      '- 格式版本：10',
+      '- 格式版本：11',
       '- 导出时间：' + nowStamp(),
       '- 主题色：' + state.color,
       ''
     ];
+
+    // TMDB Key 跟着日历文件走，换浏览器导入同一个 MD 就不用重填。
+    // 只接受 Key 的合法字符集，避免把任意文本写进头部结构。
+    const tmdbKey = window.MovieSource && typeof MovieSource.getKey === 'function'
+      ? String(MovieSource.getKey() || '')
+      : '';
+    if (/^[A-Za-z0-9._-]{8,100}$/.test(tmdbKey)) {
+      parts.push('- TMDB Key：' + tmdbKey, '');
+    }
 
     [
       { kind: 'wish', heading: '想看的电影' },
@@ -4347,6 +4362,7 @@
     const previousLibrary = state.library;
     state.library = { wish: [], watched: [] };
     let color = null;
+    let tmdbKey = '';
     let year = null;
     let month = null;
     let day = null;
@@ -4429,6 +4445,8 @@
           }
           match = /^-\s*主题色：\s*(#[0-9a-fA-F]{6})\s*$/.exec(line);
           if (match) color = match[1].toLowerCase();
+          match = /^-\s*TMDB\s*Key：\s*([A-Za-z0-9._-]{8,100})\s*$/i.exec(line);
+          if (match) tmdbKey = match[1];
           return;
         }
       }
@@ -4619,7 +4637,7 @@
       throw new Error('未识别到日历数据：请选择由本站导出的 MD 文件。');
     }
 
-    return { years: years, color: color, warnings: warnings, library: library };
+    return { years: years, color: color, tmdbKey: tmdbKey, warnings: warnings, library: library };
   }
 
   function importTextFile(file) {
@@ -4635,6 +4653,7 @@
       state.years = parsed.years;
       state.library = parsed.library || { wish: [], watched: [] };
       if (parsed.color) state.color = parsed.color;
+      if (parsed.tmdbKey && window.MovieSource) MovieSource.restoreKey(parsed.tmdbKey);
       applyTheme(state.color);
       fileHandle = null;
       pendingHandle = null;

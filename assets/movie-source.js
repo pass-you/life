@@ -9,7 +9,9 @@
  * 为什么不用豆瓣：豆瓣的匿名接口对本机 IP 连续请求后会一律 302 跳登录页，
  * 点两下「换一批」就再也拿不到数据，也没有可用的替代接口。
  *
- * Key 只在用户自己的浏览器里保存（localStorage），不写进 MD，也不经过第三方中转。
+ * Key 保存在浏览器 localStorage，同时随日历 MD 文件一起保存（「- TMDB Key：…」），
+ * 换浏览器导入同一个 MD 就能自动恢复，不需要重填。请求只直连片源，不经过第三方中转。
+ * 注意：MD 文件里的 Key 是明文，分享或公开该文件前请先清除 Key。
  */
 window.MovieSource = (function () {
   'use strict';
@@ -151,6 +153,25 @@ window.MovieSource = (function () {
     saveSource(provider);
     resetCaches();
     return key;
+  }
+
+  // 从日历文件恢复 Key：只回填 Key 与缓存，不擅自改变用户在界面上选好的片源。
+  // 本地还没有片源偏好时，才有 Key 就默认走 TMDB。
+  function restoreKey(value) {
+    const next = String(value || '').trim();
+    if (!next || next === key) return false;
+    key = next;
+    try {
+      localStorage.setItem(KEY_STORE, key);
+    } catch (error) {
+      /* 隐私模式下写不进去，当前会话仍然可用 */
+    }
+    if (!preferred) {
+      provider = 'tmdb';
+      saveSource('tmdb');
+    }
+    resetCaches();
+    return true;
   }
 
   // 用户在界面上直接选片源：TMDB 需要 Key，没有 Key 时保持原片源不动。
@@ -867,6 +888,8 @@ window.MovieSource = (function () {
     pageUrl: pageUrl,
     preload: preload,
     setKey: setKey,
+    restoreKey: restoreKey,
+    getKey: function () { return key; },
     setProvider: setProvider,
     hasKey: hasKey,
     state: state,
