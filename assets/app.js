@@ -603,9 +603,241 @@
     return { wish: wish.length, watched: watched.length };
   }
 
+  // 想看 / 看过的判定、互斥切换与按钮：日页面的找电影、月 / 年归档、影片详情共用。
+  function isIn(kind, movie) {
+    if (!movie || (!movie.id && !movie.title)) return false;
+    return collectionList(kind).some(function (entry) { return sameFilm(entry, movie); });
+  }
+
+  // 想看 / 看过 互斥切换：再点一次同一状态即取消收藏。
+  // 同一部片在另一个片源里已有记录时，直接沿用那条记录的身份字段，不再存第二份。
+  function toggleCollection(kind, movie) {
+    if (!movie || !movie.id) return false;
+    if (isIn(kind, movie)) {
+      removeFilm(movie);
+      return false;
+    }
+    addToCollection(kind, {
+      id: movie.id,
+      title: movie.title || '',
+      originalTitle: movie.originalTitle || '',
+      imdbId: movie.imdbId || (/^tt\d{3,}$/.test(movie.id) ? movie.id : ''),
+      tmdbId: movie.tmdbId || (/^\d{1,9}$/.test(movie.id) ? movie.id : ''),
+      year: movie.year || '',
+      rating: movie.rating || 0,
+      cover: movie.cover || '',
+      added: dayStamp()
+    });
+    return true;
+  }
+
+  function markButton(kind, movie, label) {
+    const on = isIn(kind, movie);
+    const id = movie && movie.id ? movie.id : '';
+    return '<button type="button" class="movie-mark' + (on ? ' is-on' : '') +
+      '" data-mark="' + kind + '" data-id="' + esc(id) +
+      '" data-title="' + esc(movie && movie.title || '') +
+      '" data-original="' + esc(movie && movie.originalTitle || '') +
+      '" data-year="' + esc(movie && movie.year || '') +
+      '" aria-pressed="' + on + '">' +
+      (on ? '✓' : '＋') + ' ' + label + '</button>';
+  }
+
   function hasLibraryContent() {
     const counts = libraryCounts();
     return counts.wish > 0 || counts.watched > 0;
+  }
+
+  // 旧版豆瓣片源存下来的海报（doubanio）现在会被对方站点按外链 403，
+  // 豆瓣 id 新的两套片源也都用不了，需要按片名回查一次替换掉。
+  const LEGACY_POSTER = /(^|\/\/)[^/]*douban(?:io)?\.com\//i;
+
+  // 影片详情：日页面的「找电影」与月 / 年「看过」归档共用同一套排版与跳转。
+  const DETAIL_SHELL =
+    '<div class="movie-detail" id="movie-detail" hidden>' +
+    '<div class="detail-bar"><button type="button" class="detail-back" data-detail-close>← 返回</button>' +
+    '<a class="detail-source" href="https://www.themoviedb.org/" target="_blank" rel="noopener noreferrer" ' +
+    'aria-label="在片源网站打开这个条目"></a></div>' +
+    '<div class="detail-body" id="movie-detail-body"></div>' +
+    '</div>';
+
+  function metaLine(parts) {
+    return parts.filter(Boolean).join(' · ');
+  }
+
+  // 详情改成用片源 JSON 直接渲染：不再内嵌第三方页面，点开就是本地排版，
+  // 断网、被墙、对方改版都不会白屏。
+  // 右上角条目跳转跟随当前条目所属片源：IMDb 条目给 IMDb 徽标，TMDB 条目给 TMDB 徽标。
+  function renderDetailBadge(detailEl, id, title) {
+    const link = detailEl.querySelector('.detail-source');
+    if (!link) return;
+    const isImdb = /^tt\d{3,}$/.test(String(id || ''));
+    const name = title || id;
+    link.href = MovieSource.pageUrl(id);
+    link.setAttribute('aria-label', '在 ' + (isImdb ? 'IMDb' : 'TMDB') +
+      ' 打开《' + name + '》的条目页');
+    link.innerHTML = isImdb
+      ? '<svg viewBox="0 0 24 24" aria-hidden="true">' +
+        '<rect width="24" height="24" rx="6" fill="#f5c518"/>' +
+        '<text x="12" y="16.2" text-anchor="middle" font-size="7.6" font-weight="700" ' +
+        'fill="#111" font-family="PingFang SC,Microsoft YaHei,sans-serif">IMDb</text></svg>'
+      : '<svg viewBox="0 0 24 24" aria-hidden="true">' +
+        '<rect width="24" height="24" rx="6" fill="#01b4e4"/>' +
+        '<text x="12" y="16.6" text-anchor="middle" font-size="9" fill="#fff" ' +
+        'font-family="PingFang SC,Microsoft YaHei,sans-serif">TMDB</text></svg>';
+  }
+
+  // ui = { overlay, detail, detailBody, remember(movie) }：
+  // remember 把读到的条目存进调用方自己的缓存，标记时能拿回完整字段。
+  function openDetailFiche(ui, id, title) {
+    if (!id) return;
+    const detail = ui.detail;
+    const detailBody = ui.detailBody;
+    detail.hidden = false;
+    detailBody.innerHTML = '<div class="detail-loading">' +
+      '<span class="detail-spinner"></span><span>正在读取影片资料…</span></div>';
+    const back = ui.overlay.querySelector('.detail-back');
+    if (back) back.focus();
+    renderDetailBadge(detail, id, title);
+    MovieSource.detail(id).then(function (movie) {
+      if (!movie || detail.hidden) return;
+      renderDetailBadge(detail, movie.id, movie.title);
+      if (ui.remember) ui.remember(movie);
+      const runtime = movie.runtime ? Math.round(movie.runtime) + ' 分钟' : '';
+      const score = movie.rating ? movie.rating.toFixed(1) : '';
+      const votes = movie.votes ? movie.votes.toLocaleString('zh-CN') + ' 人评分' : '';
+      const genres = movie.genres || [];
+      const backdrop = movie.backdrop || movie.cover || '';
+      const release = String(movie.releaseDate || '').slice(0, 10);
+      const releaseLabel = /^\d{4}-\d{2}-\d{2}$/.test(release)
+        ? (function () {
+          const parts = release.split('-');
+          return Number(parts[0]) + ' 年 ' + Number(parts[1]) + ' 月 ' + Number(parts[2]) + ' 日';
+        })()
+        : '';
+      const money = function (value) {
+        const amount = Number(value) || 0;
+        if (amount >= 1e8) return '$' + (amount / 1e8).toFixed(2).replace(/\.?0+$/, '') + ' 亿';
+        if (amount >= 1e4) return '$' + (amount / 1e4).toFixed(1).replace(/\.0$/, '') + ' 万';
+        return amount ? '$' + amount.toLocaleString('en-US') : '';
+      };
+      // 评分环按 10 分制折算，弧长与 dashoffset 在 JS 里算好，避免 CSS calc 的兼容问题。
+      const ringCirc = 2 * Math.PI * 20.5;
+      const ringOffset = (ringCirc * (1 - Math.min(10, Math.max(0, movie.rating || 0)) / 10))
+        .toFixed(2);
+      const fact = function (label, valueHtml) {
+        return valueHtml
+          ? '<div class="fact-row"><dt>' + esc(label) + '</dt><dd>' + valueHtml + '</dd></div>'
+          : '';
+      };
+      const facts =
+        fact('上映日期', esc(releaseLabel || movie.year || '')) +
+        fact('片长', esc(runtime)) +
+        fact('语言', esc((movie.languages || []).join(' / '))) +
+        fact('制片国家', esc(movie.region || '')) +
+        fact('导演', esc((movie.directors || []).join(' / '))) +
+        fact('编剧', esc((movie.crewWriters || []).join(' / '))) +
+        fact('状态', esc(movie.status || '')) +
+        fact('制作公司', esc((movie.companies || []).join(' / '))) +
+        fact('预算', esc(money(movie.budget))) +
+        fact('票房', esc(money(movie.revenue))) +
+        fact('获奖', esc(movie.awards || ''));
+      const people = (movie.castDetails && movie.castDetails.length
+        ? movie.castDetails
+        : (movie.cast || []).map(function (name) {
+          return { name: name, character: '', profile: '' };
+        })).filter(function (person) { return person && person.name; });
+      const castCards = people.map(function (person) {
+        return '<li class="cast-card">' +
+          (person.profile
+            ? '<img class="cast-avatar" src="' + esc(person.profile) + '" alt="" loading="lazy" decoding="async">'
+            : '<span class="cast-avatar cast-avatar--plain" aria-hidden="true">' +
+              esc(person.name.slice(0, 1)) + '</span>') +
+          '<span class="cast-name">' + esc(person.name) + '</span>' +
+          (person.character
+            ? '<span class="cast-role">饰 ' + esc(person.character) + '</span>' : '') +
+          '</li>';
+      }).join('');
+      detailBody.innerHTML =
+        '<article class="movie-fiche">' +
+        '<header class="fiche-hero' + (backdrop ? '' : ' is-plain') + '">' +
+        (backdrop
+          ? '<div class="fiche-shot-wrap" aria-hidden="true"><div class="fiche-shot-fill" style="background-image:url(' +
+            esc(backdrop) + ')"></div><div class="fiche-shot" style="background-image:url(' +
+            esc(backdrop) + ')"></div></div>'
+          : '') +
+        '<div class="fiche-veil" aria-hidden="true"></div>' +
+        '<div class="fiche-hero-inner">' +
+        '<div class="fiche-posterbox">' +
+        (movie.cover
+          ? '<img class="fiche-poster" src="' + esc(movie.cover) + '" alt="《' +
+            esc(movie.title) + '》海报" decoding="async">'
+          : '<div class="fiche-poster is-plain">' + esc(movie.title.slice(0, 4)) + '</div>') +
+        '</div>' +
+        '<div class="fiche-info">' +
+        '<p class="fiche-kicker">' + (movie.provider === 'cinemeta' ? 'Cinemeta 片库' : 'TMDB 片库') +
+        (movie.year ? ' · ' + esc(movie.year) : '') + '</p>' +
+        '<h2 class="fiche-title">' + esc(movie.title) + '</h2>' +
+        (movie.originalTitle && movie.originalTitle !== movie.title
+          ? '<p class="fiche-original">' + esc(movie.originalTitle) + '</p>' : '') +
+        '<p class="fiche-meta">' +
+        esc(metaLine([movie.year, releaseLabel, runtime, movie.region])) + '</p>' +
+        (genres.length
+          ? '<div class="fiche-tags">' + genres.map(function (name) {
+            return '<span class="fiche-tag">' + esc(name) + '</span>';
+          }).join('') + '</div>'
+          : '') +
+        '<div class="fiche-foot">' +
+        (score
+          ? '<div class="fiche-score">' +
+            '<span class="score-ring" role="img" aria-label="评分 ' + esc(score) + ' 分，满分 10 分">' +
+            '<svg viewBox="0 0 48 48" aria-hidden="true">' +
+            '<circle class="ring-track" cx="24" cy="24" r="20.5"/>' +
+            '<circle class="ring-fill" cx="24" cy="24" r="20.5" stroke-dasharray="' +
+            ringCirc.toFixed(2) + '" stroke-dashoffset="' + ringOffset + '"/>' +
+            '</svg><b>' + esc(score) + '<small>/10</small></b></span>' +
+            '<span class="fiche-score-copy"><em>用户评分</em>' +
+            (votes ? '<small>' + esc(votes) + '</small>' : '') +
+            '</span>' +
+            '</div>'
+          : '') +
+        '<div class="movie-marks fiche-marks">' + markButton('wish', movie, '想看') +
+        markButton('watched', movie, '看过') + '</div>' +
+        '</div></div></div></header>' +
+        '<div class="fiche-body">' +
+        '<div class="fiche-main">' +
+        (movie.tagline
+          ? '<p class="fiche-tagline">“' + esc(movie.tagline) + '”</p>' : '') +
+        '<section class="fiche-section">' +
+        '<h3 class="fiche-label">剧情简介</h3>' +
+        '<p class="fiche-overview">' +
+        esc(movie.overview || '这部片暂时没有简介。') + '</p></section>' +
+        (castCards
+          ? '<section class="fiche-section">' +
+            '<h3 class="fiche-label">主要演职员</h3>' +
+            '<ul class="cast-strip">' + castCards + '</ul></section>'
+          : '') +
+        '</div>' +
+        '<aside class="fiche-side">' +
+        (facts
+          ? '<section class="fact-card"><h3 class="fact-title">影片资料</h3>' +
+            '<dl class="fact-list">' + facts + '</dl></section>'
+          : '') +
+        '<div class="fiche-links">' +
+        '<a class="btn btn-primary fiche-link" href="' +
+        esc(movie.external || MovieSource.pageUrl(movie.id)) +
+        '" target="_blank" rel="noopener noreferrer">' +
+        (movie.provider === 'cinemeta' ? '在 IMDb 查看条目 ↗' : '在 TMDB 查看条目 ↗') + '</a>' +
+        (movie.homepage
+          ? '<a class="btn fiche-link" href="' + esc(movie.homepage) +
+            '" target="_blank" rel="noopener noreferrer">官方网站 ↗</a>' : '') +
+        '</div></aside></div></article>';
+    }).catch(function (error) {
+      if (detail.hidden) return;
+      detailBody.innerHTML = '<div class="detail-loading"><span>' +
+        esc(error && error.message ? error.message : '影片资料读取失败') +
+        '</span></div>';
+    });
   }
 
   const yearPlanOf = function (year) {
@@ -2425,15 +2657,164 @@
     warmMovieLibrary();
   }
 
+  // 月 / 年入口：只列出该期间标记过「看过」的影片，点海报看与日页面相同的详情。
+  // 这一页只回答「这段时间看了什么」，所以没有搜索、筛选、片源切换和收藏切换。
+  function openMovieArchive(year, month, scope) {
+    if (document.querySelector('.expense-modal')) return;
+    if (dedupeLibrary()) markDirty();
+    const title = scope === 'month' ? '本月看过的电影' : '本年看过的电影';
+    const empty = scope === 'month'
+      ? '这个月还没有标记看过的电影。' : '这一年还没有标记看过的电影。';
+    const known = {};
+
+    const overlay = document.createElement('div');
+    overlay.className = 'expense-modal movie-modal movie-archive';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-labelledby', 'movie-title');
+    overlay.innerHTML =
+      '<div class="expense-sheet movie-sheet">' +
+      '<div class="movie-head"><div class="movie-head-title">' +
+      '<h2 id="movie-title">' + title + '</h2>' +
+      '</div><div class="movie-head-actions">' +
+      '<button type="button" class="expense-close movie-close" aria-label="关闭">×</button>' +
+      '</div></div>' +
+      '<div class="movie-scroll" id="movie-scroll">' +
+      '<div class="movie-grid" id="movie-archive-grid"></div></div>' +
+      DETAIL_SHELL +
+      '</div>';
+    document.body.appendChild(overlay);
+    document.body.classList.add('modal-open');
+
+    const grid = overlay.querySelector('#movie-archive-grid');
+    const closeButton = overlay.querySelector('.movie-close');
+    const detail = overlay.querySelector('#movie-detail');
+    const detailBody = overlay.querySelector('#movie-detail-body');
+    const ui = {
+      overlay: overlay,
+      detail: detail,
+      detailBody: detailBody,
+      remember: function (movie) { known[movie.id] = movie; }
+    };
+
+    function archiveCard(item) {
+      const cover = item && item.cover && !LEGACY_POSTER.test(item.cover)
+        ? MovieSource.poster(item.cover) : '';
+      const name = item.title || '';
+      const open = ' data-open="' + esc(item.id) + '" data-title="' + esc(name) + '"';
+      return '<article class="movie-card">' +
+        '<button type="button" class="movie-poster' + (cover ? '' : ' is-plain') + '"' + open +
+        ' aria-label="查看《' + esc(name) + '》的详情">' +
+        (cover
+          ? '<img class="movie-poster-img" src="' + esc(cover) + '" alt="" loading="lazy" decoding="async">'
+          : '') +
+        '<span class="movie-poster-fallback">' + esc(name.slice(0, 4)) + '</span>' +
+        '</button>' +
+        '<div class="movie-body"><h3 class="movie-name">' +
+        '<button type="button" class="movie-name-btn"' + open + '>' + esc(name) + '</button>' +
+        '</h3></div></article>';
+    }
+
+    function render() {
+      const list = watchedArchive(year, month);
+      grid.innerHTML = list.length
+        ? list.map(archiveCard).join('')
+        : '<p class="movie-empty">' + empty + '</p>';
+    }
+
+    function closeDetailView() {
+      detail.hidden = true;
+      detailBody.innerHTML = '';
+    }
+
+    function close() {
+      if (!overlay.isConnected) return;
+      overlay.remove();
+      document.body.classList.remove('modal-open');
+      document.removeEventListener('keydown', onKey);
+      if (movieLibraryRefresh === render) movieLibraryRefresh = null;
+      refreshMovieEntry();
+      const entry = app.querySelector('[data-movies-open]');
+      if (entry) entry.focus();
+    }
+
+    function onKey(event) {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      if (!detail.hidden) closeDetailView();
+      else close();
+    }
+
+    // 详情里的「想看 / 看过」与日页面一样可切换；切换后清单和月 / 年入口计数立刻跟着变。
+    function syncMarks(movie) {
+      Array.prototype.forEach.call(detailBody.querySelectorAll('[data-mark]'), function (button) {
+        const on = isIn(button.dataset.mark, movie);
+        button.classList.toggle('is-on', on);
+        button.setAttribute('aria-pressed', String(on));
+        button.textContent = (on ? '✓' : '＋') + ' ' +
+          (button.dataset.mark === 'wish' ? '想看' : '看过');
+      });
+    }
+
+    overlay.addEventListener('click', function (event) {
+      if (event.target === overlay) {
+        close();
+        return;
+      }
+      if (event.target.closest('.movie-close')) {
+        close();
+        return;
+      }
+      if (event.target.closest('[data-detail-close]')) {
+        closeDetailView();
+        return;
+      }
+      const mark = event.target.closest('[data-mark]');
+      if (mark) {
+        const id = mark.dataset.id;
+        const movie = known[id] || findInCollection('watched', id) ||
+          findInCollection('wish', id) || {
+            id: id,
+            title: mark.dataset.title || '',
+            originalTitle: mark.dataset.original || '',
+            year: mark.dataset.year || ''
+          };
+        if (!movie) return;
+        toggleCollection(mark.dataset.mark, movie);
+        dedupeLibrary();
+        markDirty();
+        syncMarks(movie);
+        render();
+        refreshMovieEntry();
+        return;
+      }
+      const open = event.target.closest('[data-open]');
+      if (open) openDetailFiche(ui, open.dataset.open, open.dataset.title);
+    });
+
+    // 海报外链失效时不要留一片空白：隐藏破图，露出文字底图。
+    overlay.addEventListener('error', function (event) {
+      const img = event.target;
+      if (!img || img.tagName !== 'IMG') return;
+      img.classList.add('is-broken');
+      const poster = img.closest('.movie-poster');
+      if (poster) poster.classList.add('is-plain');
+    }, true);
+
+    document.addEventListener('keydown', onKey);
+    // 标记变化后清单即时刷新（导入、去重补齐身份等异步路径也会走到这里）。
+    movieLibraryRefresh = render;
+    render();
+    closeButton.focus();
+  }
+
   function openMovieModal(year, month, day, scope) {
     if (document.querySelector('.expense-modal')) return;
-    // 月 / 年入口带 scope：弹层默认打开「看过」清单，并按 added 日期收窄到该月 / 年。
-    const scopeName = scope === 'month' || scope === 'year' ? scope : '';
-    const scopePeriod = scopeName === 'month' ? year + '-' + pad2(month)
-      : scopeName === 'year' ? year + '-' : '';
-    const scopeLabel = scopeName === 'month' ? '本月看过的电影'
-      : scopeName === 'year' ? '本年看过的电影' : '';
-    let scopeOn = !!scopePeriod;
+    // 月 / 年入口只看该期间标记过的「看过」：不需要搜索、筛选、片源切换，单独一个极简归档页。
+    if (scope === 'month' || scope === 'year') {
+      openMovieArchive(year, month, scope);
+      return;
+    }
     // 每次打开都先合并两个片源留下的重复收藏，保证清单里一部片只有一条。
     if (dedupeLibrary()) markDirty();
     const filters = {
@@ -2479,33 +2860,6 @@
       return [item.title, item.year, item.cover].join('|');
     }
 
-    function isIn(kind, movie) {
-      if (!movie || (!movie.id && !movie.title)) return false;
-      return collectionList(kind).some(function (entry) { return sameFilm(entry, movie); });
-    }
-
-    // 想看 / 看过 互斥切换：再点一次同一状态即取消收藏。
-    // 同一部片在另一个片源里已有记录时，直接沿用那条记录的身份字段，不再存第二份。
-    function toggleCollection(kind, movie) {
-      if (!movie || !movie.id) return false;
-      if (isIn(kind, movie)) {
-        removeFilm(movie);
-        return false;
-      }
-      addToCollection(kind, {
-        id: movie.id,
-        title: movie.title || '',
-        originalTitle: movie.originalTitle || '',
-        imdbId: movie.imdbId || (/^tt\d{3,}$/.test(movie.id) ? movie.id : ''),
-        tmdbId: movie.tmdbId || (/^\d{1,9}$/.test(movie.id) ? movie.id : ''),
-        year: movie.year || '',
-        rating: movie.rating || 0,
-        cover: movie.cover || '',
-        added: dayStamp()
-      });
-      return true;
-    }
-
     function chipRow(attr, values, active) {
       return values.map(function (value) {
         const on = value === active;
@@ -2543,18 +2897,6 @@
         page: feed.page
       };
       return keyword ? MovieSource.search(payload) : MovieSource.discover(payload);
-    }
-
-    function markButton(kind, movie, label) {
-      const on = isIn(kind, movie);
-      const id = movie && movie.id ? movie.id : '';
-      return '<button type="button" class="movie-mark' + (on ? ' is-on' : '') +
-        '" data-mark="' + kind + '" data-id="' + esc(id) +
-        '" data-title="' + esc(movie && movie.title || '') +
-        '" data-original="' + esc(movie && movie.originalTitle || '') +
-        '" data-year="' + esc(movie && movie.year || '') +
-        '" aria-pressed="' + on + '">' +
-        (on ? '✓' : '＋') + ' ' + label + '</button>';
     }
 
     // 列表接口没有地区、原名和 IMDb id，收藏后用条目页补齐：
@@ -2782,184 +3124,8 @@
         markButton('watched', movie, '看过') + '</div></div></article>';
     }
 
-    function metaLine(parts) {
-      return parts.filter(Boolean).join(' · ');
-    }
-
-    // 详情改成用 TMDB 的 JSON 直接渲染：不再内嵌第三方页面，点开就是本地排版，
-    // 断网、被墙、对方改版都不会白屏。
-    // 右上角条目跳转跟随当前条目所属片源：IMDb 条目给 IMDb 徽标，TMDB 条目给 TMDB 徽标。
-    // 两个片源用同一套详情排版，不再只给 TMDB 做跳转。
-    function renderDetailBadge(id, title) {
-      const link = detail.querySelector('.detail-source');
-      if (!link) return;
-      const isImdb = /^tt\d{3,}$/.test(String(id || ''));
-      const name = title || id;
-      link.href = MovieSource.pageUrl(id);
-      link.setAttribute('aria-label', '在 ' + (isImdb ? 'IMDb' : 'TMDB') +
-        ' 打开《' + name + '》的条目页');
-      link.innerHTML = isImdb
-        ? '<svg viewBox="0 0 24 24" aria-hidden="true">' +
-          '<rect width="24" height="24" rx="6" fill="#f5c518"/>' +
-          '<text x="12" y="16.2" text-anchor="middle" font-size="7.6" font-weight="700" ' +
-          'fill="#111" font-family="PingFang SC,Microsoft YaHei,sans-serif">IMDb</text></svg>'
-        : '<svg viewBox="0 0 24 24" aria-hidden="true">' +
-          '<rect width="24" height="24" rx="6" fill="#01b4e4"/>' +
-          '<text x="12" y="16.6" text-anchor="middle" font-size="9" fill="#fff" ' +
-          'font-family="PingFang SC,Microsoft YaHei,sans-serif">TMDB</text></svg>';
-    }
-
     function openDetail(id, title) {
-      if (!id) return;
-      detail.hidden = false;
-      detailBody.innerHTML = '<div class="detail-loading">' +
-        '<span class="detail-spinner"></span><span>正在读取影片资料…</span></div>';
-      const back = overlay.querySelector('.detail-back');
-      if (back) back.focus();
-      renderDetailBadge(id, title);
-      MovieSource.detail(id).then(function (movie) {
-        if (!movie || detail.hidden) return;
-        renderDetailBadge(movie.id, movie.title);
-        feed.known[movie.id] = {
-          id: movie.id, title: movie.title, originalTitle: movie.originalTitle,
-          imdbId: movie.imdbId, year: movie.year,
-          rating: movie.rating, cover: movie.cover, genres: movie.genres
-        };
-        const runtime = movie.runtime ? Math.round(movie.runtime) + ' 分钟' : '';
-        const score = movie.rating ? movie.rating.toFixed(1) : '';
-        const votes = movie.votes ? movie.votes.toLocaleString('zh-CN') + ' 人评分' : '';
-        const genres = movie.genres || [];
-        const backdrop = movie.backdrop || movie.cover || '';
-        const release = String(movie.releaseDate || '').slice(0, 10);
-        const releaseLabel = /^\d{4}-\d{2}-\d{2}$/.test(release)
-          ? (function () {
-            const parts = release.split('-');
-            return Number(parts[0]) + ' 年 ' + Number(parts[1]) + ' 月 ' + Number(parts[2]) + ' 日';
-          })()
-          : '';
-        const money = function (value) {
-          const amount = Number(value) || 0;
-          if (amount >= 1e8) return '$' + (amount / 1e8).toFixed(2).replace(/\.?0+$/, '') + ' 亿';
-          if (amount >= 1e4) return '$' + (amount / 1e4).toFixed(1).replace(/\.0$/, '') + ' 万';
-          return amount ? '$' + amount.toLocaleString('en-US') : '';
-        };
-        // 评分环按 10 分制折算，弧长与 dashoffset 在 JS 里算好，避免 CSS calc 的兼容问题。
-        const ringCirc = 2 * Math.PI * 20.5;
-        const ringOffset = (ringCirc * (1 - Math.min(10, Math.max(0, movie.rating || 0)) / 10))
-          .toFixed(2);
-        const fact = function (label, valueHtml) {
-          return valueHtml
-            ? '<div class="fact-row"><dt>' + esc(label) + '</dt><dd>' + valueHtml + '</dd></div>'
-            : '';
-        };
-        const facts =
-          fact('上映日期', esc(releaseLabel || movie.year || '')) +
-          fact('片长', esc(runtime)) +
-          fact('语言', esc((movie.languages || []).join(' / '))) +
-          fact('制片国家', esc(movie.region || '')) +
-          fact('导演', esc((movie.directors || []).join(' / '))) +
-          fact('编剧', esc((movie.crewWriters || []).join(' / '))) +
-          fact('状态', esc(movie.status || '')) +
-          fact('制作公司', esc((movie.companies || []).join(' / '))) +
-          fact('预算', esc(money(movie.budget))) +
-          fact('票房', esc(money(movie.revenue))) +
-          fact('获奖', esc(movie.awards || ''));
-        const people = (movie.castDetails && movie.castDetails.length
-          ? movie.castDetails
-          : (movie.cast || []).map(function (name) {
-            return { name: name, character: '', profile: '' };
-          })).filter(function (person) { return person && person.name; });
-        const castCards = people.map(function (person) {
-          return '<li class="cast-card">' +
-            (person.profile
-              ? '<img class="cast-avatar" src="' + esc(person.profile) + '" alt="" loading="lazy" decoding="async">'
-              : '<span class="cast-avatar cast-avatar--plain" aria-hidden="true">' +
-                esc(person.name.slice(0, 1)) + '</span>') +
-            '<span class="cast-name">' + esc(person.name) + '</span>' +
-            (person.character
-              ? '<span class="cast-role">饰 ' + esc(person.character) + '</span>' : '') +
-            '</li>';
-        }).join('');
-        detailBody.innerHTML =
-          '<article class="movie-fiche">' +
-          '<header class="fiche-hero' + (backdrop ? '' : ' is-plain') + '">' +
-          (backdrop
-            ? '<div class="fiche-shot-wrap" aria-hidden="true"><div class="fiche-shot-fill" style="background-image:url(' +
-              esc(backdrop) + ')"></div><div class="fiche-shot" style="background-image:url(' +
-              esc(backdrop) + ')"></div></div>'
-            : '') +
-          '<div class="fiche-veil" aria-hidden="true"></div>' +
-          '<div class="fiche-hero-inner">' +
-          '<div class="fiche-posterbox">' +
-          (movie.cover
-            ? '<img class="fiche-poster" src="' + esc(movie.cover) + '" alt="《' +
-              esc(movie.title) + '》海报" decoding="async">'
-            : '<div class="fiche-poster is-plain">' + esc(movie.title.slice(0, 4)) + '</div>') +
-          '</div>' +
-          '<div class="fiche-info">' +
-          '<p class="fiche-kicker">' + (movie.provider === 'cinemeta' ? 'Cinemeta 片库' : 'TMDB 片库') +
-          (movie.year ? ' · ' + esc(movie.year) : '') + '</p>' +
-          '<h2 class="fiche-title">' + esc(movie.title) + '</h2>' +
-          (movie.originalTitle && movie.originalTitle !== movie.title
-            ? '<p class="fiche-original">' + esc(movie.originalTitle) + '</p>' : '') +
-          '<p class="fiche-meta">' +
-          esc(metaLine([movie.year, releaseLabel, runtime, movie.region])) + '</p>' +
-          (genres.length
-            ? '<div class="fiche-tags">' + genres.map(function (name) {
-              return '<span class="fiche-tag">' + esc(name) + '</span>';
-            }).join('') + '</div>'
-            : '') +
-          '<div class="fiche-foot">' +
-          (score
-            ? '<div class="fiche-score">' +
-              '<span class="score-ring" role="img" aria-label="评分 ' + esc(score) + ' 分，满分 10 分">' +
-              '<svg viewBox="0 0 48 48" aria-hidden="true">' +
-              '<circle class="ring-track" cx="24" cy="24" r="20.5"/>' +
-              '<circle class="ring-fill" cx="24" cy="24" r="20.5" stroke-dasharray="' +
-              ringCirc.toFixed(2) + '" stroke-dashoffset="' + ringOffset + '"/>' +
-              '</svg><b>' + esc(score) + '<small>/10</small></b></span>' +
-              '<span class="fiche-score-copy"><em>用户评分</em>' +
-              (votes ? '<small>' + esc(votes) + '</small>' : '') +
-              '</span>' +
-              '</div>'
-            : '') +
-          '<div class="movie-marks fiche-marks">' + markButton('wish', movie, '想看') +
-          markButton('watched', movie, '看过') + '</div>' +
-          '</div></div></div></header>' +
-          '<div class="fiche-body">' +
-          '<div class="fiche-main">' +
-          (movie.tagline
-            ? '<p class="fiche-tagline">“' + esc(movie.tagline) + '”</p>' : '') +
-          '<section class="fiche-section">' +
-          '<h3 class="fiche-label">剧情简介</h3>' +
-          '<p class="fiche-overview">' +
-          esc(movie.overview || '这部片暂时没有简介。') + '</p></section>' +
-          (castCards
-            ? '<section class="fiche-section">' +
-              '<h3 class="fiche-label">主要演职员</h3>' +
-              '<ul class="cast-strip">' + castCards + '</ul></section>'
-            : '') +
-          '</div>' +
-          '<aside class="fiche-side">' +
-          (facts
-            ? '<section class="fact-card"><h3 class="fact-title">影片资料</h3>' +
-              '<dl class="fact-list">' + facts + '</dl></section>'
-            : '') +
-          '<div class="fiche-links">' +
-          '<a class="btn btn-primary fiche-link" href="' +
-          esc(movie.external || MovieSource.pageUrl(movie.id)) +
-          '" target="_blank" rel="noopener noreferrer">' +
-          (movie.provider === 'cinemeta' ? '在 IMDb 查看条目 ↗' : '在 TMDB 查看条目 ↗') + '</a>' +
-          (movie.homepage
-            ? '<a class="btn fiche-link" href="' + esc(movie.homepage) +
-              '" target="_blank" rel="noopener noreferrer">官方网站 ↗</a>' : '') +
-          '</div></aside></div></article>';
-      }).catch(function (error) {
-        if (detail.hidden) return;
-        detailBody.innerHTML = '<div class="detail-loading"><span>' +
-          esc(error && error.message ? error.message : '影片资料读取失败') +
-          '</span></div>';
-      });
+      openDetailFiche(detailUi, id, title);
     }
 
     function closeDetail() {
@@ -2975,11 +3141,9 @@
     overlay.innerHTML =
       '<div class="expense-sheet movie-sheet">' +
       '<div class="movie-head"><div class="movie-head-title">' +
-      '<p class="eyebrow">' + (scopeName ? '找电影 · 与日页面共用' : '找电影') + '</p>' +
-      '<h2 id="movie-title">' + (scopeName ? scopeLabel : '今天想看点什么？') + '</h2>' +
-      '<p class="sub">' + (scopeName
-        ? year + ' 年' + (month ? ' ' + month + ' 月' : '') + ' · 按「看过」标记日期归档 · '
-        : year + ' 年 ' + month + ' 月 ' + day + ' 日 · ') +
+      '<p class="eyebrow">找电影</p>' +
+      '<h2 id="movie-title">今天想看点什么？</h2>' +
+      '<p class="sub">' + year + ' 年 ' + month + ' 月 ' + day + ' 日 · ' +
       '<span id="movie-source-note">正在连接片库…</span></p>' +
       '</div><div class="movie-head-actions">' +
       '<div class="movie-source-switch" role="group" aria-label="选择片源">' +
@@ -3059,12 +3223,7 @@
       '<div class="movie-library" id="movie-library" hidden></div>' +
       '</div>' +
       '</div>' +
-      '<div class="movie-detail" id="movie-detail" hidden>' +
-      '<div class="detail-bar"><button type="button" class="detail-back" data-detail-close>← 返回片库</button>' +
-      '<a class="detail-source" href="https://www.themoviedb.org/" target="_blank" rel="noopener noreferrer" ' +
-      'aria-label="在片源网站打开这个条目"></a></div>' +
-      '<div class="detail-body" id="movie-detail-body"></div>' +
-      '</div>' +
+      DETAIL_SHELL +
       '</div>';
     document.body.appendChild(overlay);
     document.body.classList.add('modal-open');
@@ -3090,6 +3249,18 @@
     const keyText = overlay.querySelector('#movie-key-text');
     const keyClear = overlay.querySelector('#movie-key-clear');
     let libraryKind = null;
+    const detailUi = {
+      overlay: overlay,
+      detail: detail,
+      detailBody: detailBody,
+      remember: function (movie) {
+        feed.known[movie.id] = {
+          id: movie.id, title: movie.title, originalTitle: movie.originalTitle,
+          imdbId: movie.imdbId, year: movie.year,
+          rating: movie.rating, cover: movie.cover, genres: movie.genres
+        };
+      }
+    };
     renderLibraryButtons();
 
     function renderLibraryButtons() {
@@ -3387,10 +3558,7 @@
       const decade = MOVIE_DECADES.filter(function (item) {
         return item.label === filters.decade;
       })[0] || {};
-      const scopedPeriod = scopeOn && libraryKind === 'watched' ? scopePeriod : '';
       const base = collectionList(libraryKind).filter(function (item) {
-        if (scopedPeriod &&
-          (typeof item.added !== 'string' || item.added.indexOf(scopedPeriod) !== 0)) return false;
         if (filters.genre !== '全部' && (item.genres || []).indexOf(filters.genre) < 0) return false;
         if (!regionMatches(item, filters.region)) return false;
         const minRating = RATING_MIN[filters.rating] || 0;
@@ -3436,27 +3604,12 @@
       }
       const all = collectionList(libraryKind).slice();
       const isWish = libraryKind === 'wish';
-      const scoped = scopeOn && !isWish && !!scopePeriod;
-      const name = scoped ? scopeLabel : isWish ? '想看的电影' : '看过的电影';
-      const pool = scoped ? all.filter(function (item) {
-        return typeof item.added === 'string' && item.added.indexOf(scopePeriod) === 0;
-      }) : all;
-      function scopeBarHtml(countHtml) {
-        return '<div class="movie-scope-bar"><p class="movie-count">' + name + ' ' +
-          countHtml + '</p>' +
-          '<button type="button" class="movie-scope-clear" data-scope-clear>查看全部看过</button></div>';
-      }
+      const name = isWish ? '想看的电影' : '看过的电影';
+      const pool = all;
       if (!pool.length) {
-        libraryEl.innerHTML = (scoped ? scopeBarHtml('<b>0</b> 部') : '') +
-          '<p class="movie-empty">' + (scoped
-          ? (scopeName === 'month' ? '这个月' : '这一年') +
-            '还没有标记看过的电影 · 在上方点「＋ 看过」记录一下。'
-          : isWish
-            ? '还没有想看的电影 · 在上方点「＋ 想看」把片子存进来。'
-            : '还没有看过的电影 · 在上方点「＋ 看过」记录一下。') + '</p>' +
-          (scoped ? '<p class="movie-note movie-hint">' +
-            '看完一部片后，在日页面或这里的「找电影」里点「＋ 看过」，' +
-            '它就会按标记日期归到对应的月份和年份。</p>' : '');
+        libraryEl.innerHTML = '<p class="movie-empty">' + (isWish
+          ? '还没有想看的电影 · 在上方点「＋ 想看」把片子存进来。'
+          : '还没有看过的电影 · 在上方点「＋ 看过」记录一下。') + '</p>';
         return;
       }
       const narrowed = filtersActive();
@@ -3464,9 +3617,7 @@
       const count = narrowed
         ? '<b>' + list.length + '</b> / ' + pool.length + ' 部'
         : '<b>' + pool.length + '</b> 部';
-      let html = scoped
-        ? scopeBarHtml(count)
-        : '<p class="movie-count">' + name + ' ' + count + '</p>';
+      let html = '<p class="movie-count">' + name + ' ' + count + '</p>';
       const searching = filters.query.trim() && titleIndex.query === filters.query.trim();
       if (searching && titleIndex.loading) {
         html += '<p class="movie-note">正在按中英文片名互相匹配…</p>';
@@ -3917,13 +4068,6 @@
         return;
       }
 
-      const scopeClear = event.target.closest('[data-scope-clear]');
-      if (scopeClear) {
-        scopeOn = false;
-        renderLibraryView();
-        return;
-      }
-
       const mark = event.target.closest('[data-mark]');
       if (mark) {
         const id = mark.dataset.id;
@@ -4036,8 +4180,6 @@
 
     applySortOptions();
     syncSourceButtons();
-    // 月 / 年入口一打开就是该期间的「看过」清单；本地 MD 数据，断网也能看。
-    if (scopeName) openLibrary('watched');
     // 没有 Key 也能直接用（Cinemeta 英文片库），所以这里总是先探测再加载；
     // 只有两个源都失败时才把 Key 面板露出来。
     MovieSource.online().then(function (available) {
@@ -4046,22 +4188,17 @@
       updateSourceNote();
       if (available) {
         // 清单已经占据屏幕时先不请求推荐流，等用户切回去再加载。
-        if (!scopeName || !libraryKind) resetFeed(takeStartPage());
+        if (!libraryKind) resetFeed(takeStartPage());
         repairLibrary(4);
         upgradeLibraryIdentity(4);
         completeMissingImdb(6);
         bridgeLibraryIds(6);
       } else {
         renderStatus();
-        if (!scopeName) showKeyPanel(true);
+        showKeyPanel(true);
       }
     });
-    if (scopeName) {
-      const watchedTab = overlay.querySelector('[data-lib="watched"]');
-      if (watchedTab) watchedTab.focus();
-    } else {
-      searchInput.focus();
-    }
+    searchInput.focus();
   }
 
 

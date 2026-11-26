@@ -3794,31 +3794,9 @@ body.modal-open {
   color: var(--muted);
 }
 
-/* 月 / 年入口打开的「看过」清单：顶部一行说明当前范围，可一键回到全部看过。 */
-.movie-scope-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 14px;
-}
-
-.movie-scope-bar .movie-count {
-  margin: 0;
-}
-
-.movie-scope-clear {
-  padding: 3px 12px;
-  border: 1px solid var(--accent-line);
-  border-radius: 999px;
-  background: var(--accent-ghost);
-  color: var(--accent-ink);
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.movie-scope-clear:hover {
-  border-color: var(--accent);
+/* 月 / 年入口的归档页：只有标题和海报墙，头部不留操作区。 */
+.movie-archive .movie-head {
+  padding-bottom: 18px;
 }
 
 @media (max-width: 720px) {
