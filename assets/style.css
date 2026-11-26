@@ -3007,8 +3007,9 @@ body.modal-open {
   padding-bottom: 8px;
 }
 
-.movie-library .movie-count {
-  margin-top: 0;
+/* 清单页不再有计数标题行，海报墙自己顶住筛选条上方的呼吸间距。 */
+.movie-library .movie-grid {
+  margin-top: 16px;
 }
 
 .movie-error {

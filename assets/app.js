@@ -3612,7 +3612,6 @@
       }
       const all = collectionList(libraryKind).slice();
       const isWish = libraryKind === 'wish';
-      const name = isWish ? '想看的电影' : '看过的电影';
       const pool = all;
       if (!pool.length) {
         libraryEl.innerHTML = '<p class="movie-empty">' + (isWish
@@ -3622,10 +3621,8 @@
       }
       const narrowed = filtersActive();
       const list = sortLibrary(libraryFiltered());
-      const count = narrowed
-        ? '<b>' + list.length + '</b> / ' + pool.length + ' 部'
-        : '<b>' + pool.length + '</b> 部';
-      let html = '<p class="movie-count">' + name + ' ' + count + '</p>';
+      // 顶部两个分段按钮已经带着各清单的片数，这里不再重复一行计数标题。
+      let html = '';
       const searching = filters.query.trim() && titleIndex.query === filters.query.trim();
       if (searching && titleIndex.loading) {
         html += '<p class="movie-note">正在按中英文片名互相匹配…</p>';
