@@ -3403,6 +3403,10 @@
         return false;
       }
       if (!MovieSource.setProvider(name)) return false;
+      // 真的切走了片源，Key 面板就没有存在理由：否则点了 Cinemeta 之后
+      // 那块「粘贴 TMDB API Key」还钉在页面顶部，看起来像没生效。
+      keyPanel.hidden = true;
+      keyHint.textContent = '';
       // 换片源不清空「已展示」记录：用户要的是换座片库继续发现新片，
       // 而不是把刚才那一批从头再推一遍。页号也重新随机。
       updateSourceNote();
@@ -4168,7 +4172,13 @@
     // 顶部两个按钮就是片源开关：点哪个用哪个，选中状态一眼可见。
     Array.prototype.forEach.call(overlay.querySelectorAll('[data-src]'), function (button) {
       button.addEventListener('click', function () {
-        if (button.dataset.src === MovieSource.provider()) return;
+        if (button.dataset.src === MovieSource.provider()) {
+          // 已经是这个片源：不必重新加载，但点 TMDB（无 Key）时自动弹出的
+          // Key 面板要能靠点回来收掉，否则这块面板会一直挡在顶部。
+          keyPanel.hidden = true;
+          keyHint.textContent = '';
+          return;
+        }
         switchSource(button.dataset.src);
       });
     });
