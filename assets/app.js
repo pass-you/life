@@ -1,4 +1,4 @@
-/* 人生日历 — 年 / 月 / 日 三级日历，数据通过 Markdown 文件导入 / 导出。 */
+/* 人生日历 — 日 / 月 / 年 三级日历，数据通过 Markdown 文件导入 / 导出。 */
 (function () {
   'use strict';
 
@@ -1212,13 +1212,16 @@
     });
   }
 
+  // 层级是日 → 月 → 年：parts 由细到粗，[0] 为当前页，
+  // 末尾自动补上「全部年份」入口，年份选择不再是首页。
   function setCrumbs(parts) {
-    const items = [{ label: '全部年份', href: '#/' }].concat(parts);
+    const items = parts && parts.length
+      ? parts.concat([{ label: '全部年份', href: '#/years' }])
+      : [{ label: '全部年份', href: null }];
     crumbsEl.innerHTML = items.map(function (item, index) {
       const sep = index ? '<span class="sep" aria-hidden="true">/</span>' : '';
-      const isLast = index === items.length - 1;
-      if (isLast) {
-        return sep + '<span class="current" aria-current="page">' + esc(item.label) + '</span>';
+      if (index === 0) {
+        return '<span class="current" aria-current="page">' + esc(item.label) + '</span>';
       }
       return sep + '<a href="' + item.href + '">' + esc(item.label) + '</a>';
     }).join('');
@@ -1575,8 +1578,8 @@
 
   /* ---------------- 页面 ---------------- */
 
-  function renderHome() {
-    document.title = '人生日历 · Life Calendar';
+  function renderYearPicker() {
+    document.title = '全部年份 · 人生日历';
     setCrumbs([]);
 
     const today = new Date();
@@ -1629,7 +1632,7 @@
 
   function renderYear(year) {
     document.title = year + ' 年 · 人生日历';
-    setCrumbs([{ label: year + ' 年', href: null }]);
+    setCrumbs([{ label: year + ' 年' }]);
 
     const today = new Date();
     const leap = isLeapYear(year);
@@ -1667,6 +1670,7 @@
       '<p class="sub">' + (leap ? '闰年' : '平年') + ' · ' + (leap ? 366 : 365) +
       ' 天 · 已记录 ' + recorded + ' 天</p></div>' +
       '<div class="chapter-actions">' +
+      '<a class="btn" href="#/years">全部年份</a>' +
       '<button type="button" class="expense-entry' +
       (yearIncome > 0 || yearExpense > 0 ? ' has-expenses' : '') +
       '" data-year-finance aria-haspopup="dialog" title="年度收支 · 净收入 ' + formatCents(yearNet) +
@@ -1877,8 +1881,8 @@
   function renderMonth(year, month) {
     document.title = year + ' 年 ' + month + ' 月 · 人生日历';
     setCrumbs([
-      { label: year + ' 年', href: '#/' + year },
-      { label: month + ' 月', href: null }
+      { label: month + ' 月' },
+      { label: year + ' 年', href: '#/' + year }
     ]);
 
     const today = new Date();
@@ -1933,6 +1937,7 @@
       '<h1 class="display">' + month + '<span class="unit">月</span></h1>' +
       '<p class="sub">' + total + ' 天 · 已记录 ' + recorded + ' 天</p></div>' +
       '<div class="chapter-actions">' +
+      '<a class="btn" href="#/' + year + '">本年</a>' +
       '<button type="button" class="expense-entry' +
       (monthIncome > 0 || monthExpense > 0 ? ' has-expenses' : '') +
       '" data-month-finance aria-haspopup="dialog" title="本月收支 · 净收入 ' + formatCents(monthNet) +
@@ -1969,9 +1974,9 @@
   function renderDay(year, month, day) {
     document.title = year + ' 年 ' + month + ' 月 ' + day + ' 日 · 人生日历';
     setCrumbs([
-      { label: year + ' 年', href: '#/' + year },
+      { label: day + ' 日' },
       { label: month + ' 月', href: '#/' + year + '/' + month },
-      { label: day + ' 日', href: null }
+      { label: year + ' 年', href: '#/' + year }
     ]);
 
     const today = new Date();
@@ -2004,6 +2009,7 @@
       '<h1 class="display">' + day + '<span class="unit">日</span></h1>' +
       '<p class="sub">星期' + weekdayName(year, month, day) + (isToday ? ' · 今天' : '') + '</p></div>' +
       '<div class="chapter-actions">' +
+      '<a class="btn" href="#/' + year + '/' + month + '">本月</a>' +
       '<button type="button" class="expense-entry film-entry' +
       (movies.wish || movies.watched ? ' has-movies' : '') +
       '" data-movies-open aria-haspopup="dialog" title="找电影 · 想看 ' + movies.wish +
@@ -4490,12 +4496,20 @@
 
   /* ---------------- 路由 ---------------- */
 
+  function todayRoute() {
+    const now = new Date();
+    const year = Math.min(MAX_YEAR, Math.max(MIN_YEAR, now.getFullYear()));
+    return { level: 'day', y: year, m: now.getMonth() + 1, d: now.getDate() };
+  }
+
   function parseRoute() {
     const raw = location.hash.replace(/^#\/?/, '').replace(/\/+$/, '');
-    if (!raw) return { level: 'home' };
+    // 打开网站直接落在今天的日页面；年份选择退到 #/years。
+    if (!raw) return todayRoute();
+    if (raw === 'years') return { level: 'years' };
     const parts = raw.split('/').map(Number);
     if (parts.length > 3 || parts.some(function (n) { return !Number.isInteger(n) || n < 1; })) {
-      return { level: 'home' };
+      return todayRoute();
     }
     const year = Math.min(MAX_YEAR, Math.max(MIN_YEAR, parts[0]));
     if (parts.length === 1) return { level: 'year', y: year };
@@ -4506,7 +4520,7 @@
   }
 
   function canonicalHash(route) {
-    if (route.level === 'home') return '#/';
+    if (route.level === 'years') return '#/years';
     if (route.level === 'year') return '#/' + route.y;
     if (route.level === 'month') return '#/' + route.y + '/' + route.m;
     return '#/' + route.y + '/' + route.m + '/' + route.d;
@@ -4531,7 +4545,7 @@
     window.scrollTo(0, 0);
     destroyVditorEditors();
     if (route.level !== 'day') hideWeatherOverlay();
-    if (route.level === 'home') renderHome();
+    if (route.level === 'years') renderYearPicker();
     else if (route.level === 'year') renderYear(route.y);
     else if (route.level === 'month') renderMonth(route.y, route.m);
     else renderDay(route.y, route.m, route.d);
