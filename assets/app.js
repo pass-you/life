@@ -99,51 +99,23 @@
   function sceneParticles(count, type) {
     let out = '';
     for (let i = 0; i < count; i += 1) {
-      let style;
-      if (type === 'snow') {
-        // 三层景深：远层细碎慢落，中层常规，近层大朵虚化扫过，营造大雪纷飞。
-        const roll = Math.random();
-        const layer = roll < 0.4 ? 0 : roll < 0.82 ? 1 : 2;
-        const size = layer === 0 ? 3 + Math.random() * 3
-          : layer === 1 ? 7 + Math.random() * 5
-            : 15 + Math.random() * 12;
-        const duration = layer === 0 ? 9 + Math.random() * 4
-          : layer === 1 ? 6 + Math.random() * 3.5
-            : 3.6 + Math.random() * 2.4;
-        const swayX = layer === 0 ? 8 + Math.random() * 8
-          : layer === 1 ? 16 + Math.random() * 14
-            : 26 + Math.random() * 20;
-        style = '--x:' + (Math.random() * 100).toFixed(1) + '%;' +
-          '--delay:-' + (Math.random() * 14).toFixed(2) + 's;' +
-          '--dur:' + duration.toFixed(2) + 's;' +
-          '--sway:' + (duration * (0.4 + Math.random() * 0.35)).toFixed(2) + 's;' +
-          '--swayX:' + swayX.toFixed(1) + 'px;' +
-          '--swayDelay:-' + (Math.random() * 12).toFixed(2) + 's;' +
-          '--spin:' + (layer === 2 ? 8 + Math.random() * 7 : 18 + Math.random() * 14).toFixed(1) + 's;' +
-          '--size:' + size.toFixed(1) + 'px;' +
-          '--blur:' + (layer === 0 ? 0.5 : layer === 1 ? 0.3 : 1.5 + Math.random() * 1.2).toFixed(1) + 'px;' +
-          '--o:' + (layer === 0 ? 0.5 + Math.random() * 0.25
-            : layer === 1 ? 0.8 + Math.random() * 0.15
-              : 0.45 + Math.random() * 0.22).toFixed(2) + ';';
-      } else {
-        const storm = type.indexOf('storm') === 0;
-        const near = type === 'nearRain' || type === 'stormNear';
-        const width = near ? (storm ? 2.2 + Math.random() * 1.4 : 1.5 + Math.random() * 1.1)
-          : (storm ? 0.9 + Math.random() * 0.5 : 0.7 + Math.random() * 0.4);
-        const height = near ? (storm ? 30 + Math.random() * 22 : 22 + Math.random() * 16)
-          : (storm ? 14 + Math.random() * 8 : 10 + Math.random() * 6);
-        const duration = near ? (storm ? 0.34 + Math.random() * 0.2 : 0.5 + Math.random() * 0.3)
-          : (storm ? 1 + Math.random() * 0.4 : 1.4 + Math.random() * 0.5);
-        const wind = near ? (storm ? 110 + Math.random() * 50 : 60 + Math.random() * 30)
-          : (storm ? 70 + Math.random() * 40 : 40 + Math.random() * 30);
-        style = '--x:' + (Math.random() * 100).toFixed(1) + '%;' +
-          '--delay:-' + (Math.random() * 8).toFixed(2) + 's;' +
-          '--dur:' + duration.toFixed(2) + 's;' +
-          '--w:' + width.toFixed(1) + 'px;' +
-          '--h:' + height.toFixed(1) + 'px;' +
-          '--wind:' + wind.toFixed(0) + 'px;' +
-          '--o:' + (near ? 0.6 + Math.random() * 0.3 : 0.28 + Math.random() * 0.22).toFixed(2) + ';';
-      }
+      const storm = type.indexOf('storm') === 0;
+      const near = type === 'nearRain' || type === 'stormNear';
+      const width = near ? (storm ? 2.2 + Math.random() * 1.4 : 1.5 + Math.random() * 1.1)
+        : (storm ? 0.9 + Math.random() * 0.5 : 0.7 + Math.random() * 0.4);
+      const height = near ? (storm ? 30 + Math.random() * 22 : 22 + Math.random() * 16)
+        : (storm ? 14 + Math.random() * 8 : 10 + Math.random() * 6);
+      const duration = near ? (storm ? 0.34 + Math.random() * 0.2 : 0.5 + Math.random() * 0.3)
+        : (storm ? 1 + Math.random() * 0.4 : 1.4 + Math.random() * 0.5);
+      const wind = near ? (storm ? 110 + Math.random() * 50 : 60 + Math.random() * 30)
+        : (storm ? 70 + Math.random() * 40 : 40 + Math.random() * 30);
+      const style = '--x:' + (Math.random() * 100).toFixed(1) + '%;' +
+        '--delay:-' + (Math.random() * 8).toFixed(2) + 's;' +
+        '--dur:' + duration.toFixed(2) + 's;' +
+        '--w:' + width.toFixed(1) + 'px;' +
+        '--h:' + height.toFixed(1) + 'px;' +
+        '--wind:' + wind.toFixed(0) + 'px;' +
+        '--o:' + (near ? 0.6 + Math.random() * 0.3 : 0.28 + Math.random() * 0.22).toFixed(2) + ';';
       out += '<span style="' + style + '"></span>';
     }
     return out;
@@ -194,30 +166,247 @@
     }, first ? 1600 + Math.random() * 1400 : 2600 + Math.random() * 2400);
   }
 
-  function sceneSnowFeatures() {
-    const flake = '<svg viewBox="0 0 64 64" aria-hidden="true">' +
-      '<g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">' +
-      '<path d="M32 4v56M8.2 18l47.6 28M8.2 46l47.6-28"/>' +
-      '<path d="M32 12l-4-4M32 12l4-4M32 52l-4 4M32 52l4 4"/>' +
-      '<path d="M10.3 19.2l-1-5M10.3 19.2l-5-1M53.7 44.8l1 5M53.7 44.8l5 1' +
-      'M53.7 19.2l1-5M53.7 19.2l5-1M10.3 44.8l-1 5M10.3 44.8l-5 1"/>' +
-      '<circle cx="32" cy="32" r="2.2"/></g></svg>';
+  /* ---------------- 雪：Canvas 三层景深 ----------------
+   * 每片雪花各自是一个带位移/自转/模糊的 DOM 元素时，数百个合成层会把合成器压满
+   * （实测 240 片只有 40fps）。改成一张 canvas 逐帧绘制预渲染的雪花精灵后，
+   * 雪片可以更大更密，帧率反而更稳。 */
 
-    let out = '<div class="scene-snow-features">';
-    for (let i = 0; i < 2; i += 1) {
-      const size = 14 + Math.random() * 8;
-      const x = 12 + Math.random() * 76;
-      const delay = -(Math.random() * 26).toFixed(1);
-      const duration = 20 + Math.random() * 8;
-      out += '<i class="snow-feature" style="--x:' + x.toFixed(1) + '%;' +
-        '--size:' + size.toFixed(1) + 'px;' +
-        '--delay:' + delay + 's;' +
-        '--dur:' + duration.toFixed(1) + 's;' +
-        '--sway:' + (duration * 0.3).toFixed(1) + 's;' +
-        '--swayX:' + (16 + Math.random() * 14).toFixed(1) + 'px;' +
-        '--spin:' + (16 + Math.random() * 10).toFixed(1) + 's">' + flake + '</i>';
+  // ratio 占比，r 半径，dur 落满整屏的秒数，sway 左右摆幅，spin 自转角速度（rad/s）
+  const SNOW_LAYERS = [
+    { ratio: 0.34, rMin: 2.4, rMax: 4.2, durMin: 10, durMax: 14.5,
+      swayMin: 8, swayMax: 18, alphaMin: 0.55, alphaMax: 0.8, spinMin: 0.1, spinMax: 0.3 },
+    { ratio: 0.46, rMin: 4.6, rMax: 7.6, durMin: 7, durMax: 11,
+      swayMin: 16, swayMax: 32, alphaMin: 0.85, alphaMax: 1, spinMin: 0.2, spinMax: 0.5 },
+    { ratio: 0.2, rMin: 9, rMax: 17, durMin: 4.6, durMax: 8,
+      swayMin: 28, swayMax: 50, alphaMin: 0.52, alphaMax: 0.8, spinMin: 0.15, spinMax: 0.45 }
+  ];
+
+  // 预渲染一张六角雪花精灵：中心高光 + 六条带分枝的冷蓝雪臂，浅米白底上仍看得清。
+  function makeFlakeSprite(layer, variant) {
+    const size = 128;
+    const sprite = document.createElement('canvas');
+    sprite.width = size;
+    sprite.height = size;
+    const g = sprite.getContext('2d');
+    if (!g) return sprite;
+    const c = size / 2;
+
+    if (layer === 2) {
+      // 近景大雪片自带柔光与虚化（烘焙进精灵，运行时不再套 filter）。
+      if ('filter' in g) g.filter = 'blur(' + (variant ? 2.4 : 1.4) + 'px)';
+      const halo = g.createRadialGradient(c, c, 0, c, c, c);
+      halo.addColorStop(0, 'rgba(255,255,255,0.6)');
+      halo.addColorStop(0.42, 'rgba(234,244,253,0.3)');
+      halo.addColorStop(1, 'rgba(234,244,253,0)');
+      g.fillStyle = halo;
+      g.beginPath();
+      g.arc(c, c, c, 0, Math.PI * 2);
+      g.fill();
     }
-    return out + '</div>';
+
+    const core = g.createRadialGradient(c, c, 0, c, c, size * 0.22);
+    core.addColorStop(0, 'rgba(255,255,255,1)');
+    core.addColorStop(0.5, 'rgba(242,249,255,0.92)');
+    core.addColorStop(1, 'rgba(214,232,248,0)');
+    g.fillStyle = core;
+    g.beginPath();
+    g.arc(c, c, size * 0.22, 0, Math.PI * 2);
+    g.fill();
+
+    g.strokeStyle = layer === 0 ? 'rgba(170,200,228,0.9)' : 'rgba(182,210,236,0.96)';
+    g.lineWidth = layer === 2 ? 3 : 3.4;
+    g.lineCap = 'round';
+
+    const out = size * (0.44 + variant * 0.025);
+    const inner = size * 0.06;
+    for (let i = 0; i < 6; i += 1) {
+      const a = (Math.PI / 3) * i - Math.PI / 2;
+      const cos = Math.cos(a);
+      const sin = Math.sin(a);
+      g.beginPath();
+      g.moveTo(c + cos * inner, c + sin * inner);
+      g.lineTo(c + cos * out, c + sin * out);
+      g.stroke();
+      if (layer === 0) continue; // 远层最小，分枝在 3px 内看不出来，省掉绘制。
+      const marks = [0.55, 0.78];
+      for (let m = 0; m < marks.length; m += 1) {
+        const bx = c + cos * out * marks[m];
+        const by = c + sin * out * marks[m];
+        const len = size * 0.075;
+        for (let s = -1; s <= 1; s += 2) {
+          const ba = a + s * 0.62;
+          g.beginPath();
+          g.moveTo(bx, by);
+          g.lineTo(bx + Math.cos(ba) * len, by + Math.sin(ba) * len);
+          g.stroke();
+        }
+      }
+    }
+    return sprite;
+  }
+
+  let flakeSpriteCache = null;
+  function flakeSprites() {
+    if (!flakeSpriteCache) {
+      flakeSpriteCache = SNOW_LAYERS.map(function (_, layer) {
+        return [makeFlakeSprite(layer, 0), makeFlakeSprite(layer, 1)];
+      });
+    }
+    return flakeSpriteCache;
+  }
+
+  let snowState = null;
+  let snowRaf = 0;
+
+  function stopSnow() {
+    if (snowRaf) {
+      window.cancelAnimationFrame(snowRaf);
+      snowRaf = 0;
+    }
+    if (snowState && snowState.ro) snowState.ro.disconnect();
+    snowState = null;
+  }
+
+  function makeFlake(spec, layer, width, height) {
+    const r = spec.rMin + Math.random() * (spec.rMax - spec.rMin);
+    const dur = spec.durMin + Math.random() * (spec.durMax - spec.durMin);
+    return {
+      layer: layer,
+      sprite: Math.random() < 0.5 ? 0 : 1,
+      r: r,
+      x: Math.random() * width,
+      // 初始就铺满整屏，切到雪天不出现"从顶上排队落下"的空档。
+      y: Math.random() * (height + r * 2) - r * 2,
+      dur: dur,
+      vy: height / dur,
+      wind: -(4 + Math.random() * 10),
+      sway: spec.swayMin + Math.random() * (spec.swayMax - spec.swayMin),
+      swaySpeed: 0.18 + Math.random() * 0.22,
+      phase: Math.random() * Math.PI * 2,
+      rot: Math.random() * Math.PI * 2,
+      spin: spec.spinMin + Math.random() * (spec.spinMax - spec.spinMin),
+      alpha: spec.alphaMin + Math.random() * (spec.alphaMax - spec.alphaMin)
+    };
+  }
+
+  function seedSnow(state) {
+    const width = state.w;
+    const height = state.h;
+    // 密度按覆盖面积给：屏幕再大也不至于挤成一片，375px 上也不会稀疏。
+    const total = Math.round(Math.min(520, Math.max(90, (width * height) / 1500)));
+    const particles = [];
+    for (let layer = 0; layer < SNOW_LAYERS.length; layer += 1) {
+      const spec = SNOW_LAYERS[layer];
+      const n = Math.round(total * spec.ratio);
+      for (let i = 0; i < n; i += 1) {
+        particles.push(makeFlake(spec, layer, width, height));
+      }
+    }
+    // 另外三片格外醒目的六角大雪片，慢悠悠地飘过。
+    for (let i = 0; i < 3; i += 1) {
+      const big = makeFlake(SNOW_LAYERS[2], 2, width, height);
+      big.r = 20 + Math.random() * 12;
+      big.dur = 22 + Math.random() * 8;
+      big.vy = height / big.dur;
+      big.sway = 28 + Math.random() * 24;
+      big.alpha = 0.82 + Math.random() * 0.14;
+      big.spin = 0.15 + Math.random() * 0.2;
+      big.sprite = 1;
+      particles.push(big);
+    }
+    state.particles = particles;
+  }
+
+  function paintSnow(state, ts) {
+    const ctx = state.ctx;
+    if (state.w < 2 || state.h < 2) state.fit();
+    const width = state.w;
+    const height = state.h;
+    const dpr = state.dpr;
+    const dt = state.last ? Math.min(0.05, (ts - state.last) / 1000) : 0;
+    state.last = ts;
+
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, state.canvas.width, state.canvas.height);
+
+    const sprites = state.sprites;
+    const list = state.particles;
+    for (let i = 0; i < list.length; i += 1) {
+      const p = list[i];
+      p.y += p.vy * dt;
+      p.x += p.wind * dt;
+      p.phase += p.swaySpeed * dt;
+      p.rot += p.spin * dt;
+      if (p.y > height + p.r * 2) {
+        p.y = -p.r * 2 - Math.random() * height * 0.25;
+        p.x = Math.random() * width;
+      }
+      if (p.x < -p.r * 3) p.x = width + p.r * 3;
+      else if (p.x > width + p.r * 3) p.x = -p.r * 3;
+
+      const x = p.x + Math.sin(p.phase) * p.sway;
+      const fade = Math.min(1, (p.y + p.r * 2) / 36, Math.max(0, (height - p.y) / 40));
+      const alpha = p.alpha * fade;
+      if (alpha <= 0.01) continue;
+
+      const cos = Math.cos(p.rot) * dpr;
+      const sin = Math.sin(p.rot) * dpr;
+      ctx.setTransform(cos, sin, -sin, cos, x * dpr, p.y * dpr);
+      ctx.globalAlpha = alpha;
+      ctx.drawImage(sprites[p.layer][p.sprite], -p.r, -p.r, p.r * 2, p.r * 2);
+    }
+    ctx.globalAlpha = 1;
+    snowRaf = window.requestAnimationFrame(function (next) { paintSnow(state, next); });
+  }
+
+  function startSnow(canvas) {
+    stopSnow();
+    if (!canvas) return;
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const state = {
+      canvas: canvas,
+      ctx: ctx,
+      w: 0,
+      h: 0,
+      dpr: 1,
+      last: 0,
+      particles: [],
+      sprites: flakeSprites(),
+      ro: null
+    };
+    snowState = state;
+
+    state.fit = function () {
+      const rect = canvas.getBoundingClientRect();
+      const width = Math.round(rect.width);
+      const height = Math.round(rect.height);
+      if (width < 2 || height < 2) return;
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      if (width === state.w && height === state.h && dpr === state.dpr && state.particles.length) return;
+      const reshuffle = !state.particles.length ||
+        Math.abs(width - state.w) > 8 || Math.abs(height - state.h) > 8;
+      state.w = width;
+      state.h = height;
+      state.dpr = dpr;
+      canvas.width = Math.round(width * dpr);
+      canvas.height = Math.round(height * dpr);
+      if (reshuffle) seedSnow(state);
+      else {
+        for (let i = 0; i < state.particles.length; i += 1) {
+          state.particles[i].vy = height / state.particles[i].dur;
+        }
+      }
+    };
+
+    state.fit();
+    if (window.ResizeObserver) {
+      state.ro = new ResizeObserver(function () { state.fit(); });
+      state.ro.observe(canvas);
+    }
+    snowRaf = window.requestAnimationFrame(function (ts) { paintSnow(state, ts); });
   }
 
   // 雨雪粒子按视口宽度降级：手机屏幕上 200 多个独立动画元素会明显拖慢合成，
@@ -263,8 +452,8 @@
         '<path d="M22 4 10 31h8l-3 22 13-27h-7l1-22"/></svg>' +
         '<div class="scene-flash"></div>';
     } else if (key === 'snow') {
-      html += sceneClouds(3) + '<div class="scene-snow">' +
-        sceneParticles(sceneCount(170), 'snow') + sceneSnowFeatures() + '</div>';
+      html += sceneClouds(3) +
+        '<div class="scene-snow"><canvas class="snow-canvas" aria-hidden="true"></canvas></div>';
     } else if (key === 'fog') {
       html += sceneClouds(1) +
         '<div class="scene-fog"><span></span><span></span><span></span></div>';
@@ -304,6 +493,7 @@
 
   function hideWeatherOverlay() {
     stopStormEffects();
+    stopSnow();
     const overlay = document.getElementById('weather-overlay');
     if (!overlay) return;
     overlay.hidden = true;
@@ -316,6 +506,7 @@
     const scene = document.getElementById('weather-overlay');
     if (!scene) return;
     stopStormEffects();
+    stopSnow();
     const item = weatherByLabel(label);
     if (!item) {
       hideWeatherOverlay();
@@ -325,6 +516,10 @@
     scene.dataset.weather = item.icon;
     scene.innerHTML = weatherSceneMarkup(item);
     updateWeatherOverlaySize();
+    if (item.icon === 'snow') {
+      // 高度先落定再启动，canvas 首次测量就能拿到真实尺寸。
+      startSnow(scene.querySelector('.snow-canvas'));
+    }
     if (item.icon === 'storm') {
       scheduleStormStrike(true);
     }

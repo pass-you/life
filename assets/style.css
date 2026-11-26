@@ -1660,86 +1660,13 @@ main,
   100% { opacity: 0; transform: translateX(-50%) scale(1.25) translateY(-3px); }
 }
 
-.scene-snow span {
-  position: absolute;
-  top: calc(var(--size, 8px) * -1.4);
-  left: var(--x);
-  width: var(--size);
-  height: var(--size);
-  /* 页面底色是米白，纯白雪片几乎看不见：中心留亮白高光，六条臂用冷蓝灰提高浅底对比。 */
-  background:
-    radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 1) 0 18%, rgba(214, 232, 248, 0.55) 26% 40%, transparent 46%),
-    linear-gradient(0deg, transparent 44%, rgba(160, 192, 222, 0.95) 44% 56%, transparent 56%),
-    linear-gradient(60deg, transparent 44%, rgba(160, 192, 222, 0.95) 44% 56%, transparent 56%),
-    linear-gradient(120deg, transparent 44%, rgba(160, 192, 222, 0.95) 44% 56%, transparent 56%);
-  filter: blur(var(--blur, 0px));
-  transform-origin: center;
-  opacity: 0;
-  animation:
-    snowFall var(--dur) linear infinite,
-    snowSway var(--sway) ease-in-out infinite alternate,
-    snowSpin var(--spin) linear infinite;
-  animation-delay: var(--delay), var(--swayDelay, var(--delay)), var(--delay);
-}
-
-@keyframes snowFall {
-  0% { transform: translate3d(0, -12px, 0); opacity: 0; }
-  10% { opacity: var(--o); }
-  90% { opacity: var(--o); }
-  100% { transform: translate3d(0, var(--fall, 400px), 0); opacity: 0; }
-}
-
-@keyframes snowSway {
-  from { translate: calc(var(--swayX, 10px) * -1) 0; }
-  to { translate: var(--swayX, 10px) 0; }
-}
-
-@keyframes snowSpin {
-  to { rotate: 360deg; }
-}
-
-.scene-snow-features {
+.scene-snow canvas {
   position: absolute;
   inset: 0;
-  z-index: 1;
-  pointer-events: none;
-}
-
-.snow-feature {
-  position: absolute;
-  top: -40px;
-  left: var(--x);
-  width: var(--size);
-  height: var(--size);
-  color: rgba(176, 204, 230, 0.95);
-  opacity: 0;
-  filter: drop-shadow(0 1px 3px rgba(90, 122, 156, 0.4));
-  animation:
-    snowFeatureFall var(--dur) linear infinite,
-    snowFeatureSway var(--sway) ease-in-out infinite alternate;
-  animation-delay: var(--delay);
-}
-
-.snow-feature svg {
   width: 100%;
   height: 100%;
-  animation: snowFeatureSpin var(--spin) linear infinite;
-}
-
-@keyframes snowFeatureFall {
-  0% { transform: translate3d(0, -40px, 0); opacity: 0; }
-  8% { opacity: 1; }
-  72% { opacity: 1; }
-  100% { transform: translate3d(0, var(--fall, 400px), 0); opacity: 0; }
-}
-
-@keyframes snowFeatureSway {
-  from { translate: calc(var(--swayX, 14px) * -1) 0; }
-  to { translate: var(--swayX, 14px) 0; }
-}
-
-@keyframes snowFeatureSpin {
-  to { rotate: 360deg; }
+  display: block;
+  pointer-events: none;
 }
 
 .scene-lightning {
