@@ -233,6 +233,21 @@ class MainActivity : AppCompatActivity() {
         return "{\"ok\":true,\"name\":\"${savedName}\",\"text\":${JSONObject.quote(text)}}"
     }
 
+    private fun releaseUrl(raw: String): String {
+        val full = if (raw.startsWith("http")) raw
+        else "https://pass-you.github.io/life/${raw.removePrefix("/")}"
+        return try {
+            val u = java.net.URL(full)
+            val encodedPath = u.path.split("/").joinToString("/") { segment ->
+                java.net.URLEncoder.encode(segment, "UTF-8")
+            }
+            java.net.URL(u.protocol, u.host, u.port,
+                encodedPath + (u.query?.let { "?$it" } ?: "")).toString()
+        } catch (e: Exception) {
+            full
+        }
+    }
+
     private fun clearFile(): String {
         savedUri = null
         savedName = ""
@@ -265,7 +280,7 @@ class MainActivity : AppCompatActivity() {
                 val url = android.optString("url")
                 val expected = android.optString("sha256", "")
                 val target = File(cacheDir, "LifeCalendar-new.apk")
-                downloadAndVerify(url, target, expected)
+                downloadAndVerify(releaseUrl(url), target, expected)
                 installApk(target)
                 "{\"ok\":true,\"message\":\"已下载 ${manifest.optString("version")}，请在系统弹窗中确认安装\"}"
             } catch (e: Exception) {

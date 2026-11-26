@@ -265,6 +265,12 @@ class Bridge:
         save_config(cfg)
         return result()
 
+    def _release_url(self, relative_or_url: str) -> str:
+        if relative_or_url.startswith("http"):
+            return urllib.parse.quote(relative_or_url, safe=":/?#[]@!$&'()*+,;=%")
+        base = "https://pass-you.github.io/life/release/"
+        return base + urllib.parse.quote(relative_or_url.rsplit("/", 1)[-1])
+
     def op_restore_saved_file(self, args) -> str:
         path = self.saved_path or load_config().get("file") or ""
         if not path or not Path(path).is_file():
@@ -321,10 +327,7 @@ class Bridge:
         url = win.get("url")
         if not url:
             raise RuntimeError("版本清单缺少 Windows 安装包地址")
-        if url.startswith("/"):
-            url = "https://pass-you.github.io/life/" + url.lstrip("/")
-        elif not url.startswith("http"):
-            url = "https://pass-you.github.io/life/release/" + url
+        url = self._release_url(url)
 
         expected = win.get("sha256", "")
         target = Path(os.environ.get("TEMP", str(Path.home()))) / "LifeCalendar-new.exe"
