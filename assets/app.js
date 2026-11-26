@@ -536,6 +536,7 @@
   const exportBtn = document.getElementById('exportBtn');
   const reconnectBtn = document.getElementById('reconnectBtn');
   const fileInput = document.getElementById('fileInput');
+  const updateBtn = document.getElementById('updateBtn');
 
   /* ---------------- 日期工具 ---------------- */
 
@@ -1219,6 +1220,24 @@
   const supportsFsa = typeof window.showOpenFilePicker === 'function' &&
     typeof window.showSaveFilePicker === 'function';
 
+  /* 桌面 / 安卓壳内，fileHandle 是 {bridge: true, name} 的伪句柄，
+   * 读写全部转发给原生桥（LifeBridgeClient），其余状态机与浏览器一致。 */
+  function bridgeFile() {
+    return fileHandle && fileHandle.bridge ? fileHandle : null;
+  }
+
+  function bridgeReady() {
+    return !!(window.LifeBridgeClient && LifeBridgeClient.platform());
+  }
+
+  async function bridgeCallChecked(fn) {
+    try {
+      return await fn();
+    } catch (err) {
+      return { ok: false, error: describeFileError(err) };
+    }
+  }
+
   function countData() {
     let years = 0;
     let days = 0;
@@ -1313,6 +1332,11 @@
   }
 
   async function writeHandle(handle, text) {
+    if (handle.bridge) {
+      const res = await LifeBridgeClient.writeFile(text);
+      if (!res.ok) throw new Error(res.error || '写入失败');
+      return;
+    }
     const writable = await handle.createWritable();
     try {
       await writable.write(text);
@@ -1332,7 +1356,7 @@
       fileStatus.textContent = noticeText;
       return;
     }
-    if (!supportsFsa) {
+    if (!supportsFsa && !bridgeFile()) {
       fileStatus.textContent = '当前浏览器不支持自动同步 · 请用「导出副本」保存';
       return;
     }
@@ -1432,16 +1456,33 @@
     }
   }
 
+  function applyParsedContent(parsed) {
+    state.years = parsed.years;
+    // 电影清单同样是文件内容的一部分，恢复文件时必须一起读回来，
+    // 否则重开页面后清单为空，下一次写入会把文件里的收藏覆盖掉。
+    state.library = parsed.library || { wish: [], watched: [] };
+    if (parsed.color) state.color = parsed.color;
+    // Key 是文件内容的一部分：换浏览器打开同一个 MD 就能直接找电影。
+    if (parsed.tmdbKey && window.MovieSource) MovieSource.restoreKey(parsed.tmdbKey);
+    applyTheme(state.color);
+  }
+
   async function attachHandle(handle, loadContent) {
     let parsed = null;
     let needsSync = false;
 
     if (loadContent) {
-      const file = await handle.getFile();
-      if (file.size > MD_MAX_BYTES) {
-        throw new Error('文件超过 5 MB，无法打开');
+      let text = '';
+      if (handle.bridge) {
+        const res = await LifeBridgeClient.restoreSavedFile();
+        if (res.ok && typeof res.text === 'string') text = res.text;
+      } else {
+        const file = await handle.getFile();
+        if (file.size > MD_MAX_BYTES) {
+          throw new Error('文件超过 5 MB，无法打开');
+        }
+        text = await file.text();
       }
-      const text = await file.text();
       if (text.trim()) {
         parsed = parseMarkdown(text);
       } else {
@@ -1450,16 +1491,7 @@
       }
     }
 
-    if (parsed) {
-      state.years = parsed.years;
-      // 电影清单同样是文件内容的一部分，恢复文件时必须一起读回来，
-      // 否则重开页面后清单为空，下一次写入会把文件里的收藏覆盖掉。
-      state.library = parsed.library || { wish: [], watched: [] };
-      if (parsed.color) state.color = parsed.color;
-      // Key 是文件内容的一部分：换浏览器打开同一个 MD 就能直接找电影。
-      if (parsed.tmdbKey && window.MovieSource) MovieSource.restoreKey(parsed.tmdbKey);
-      applyTheme(state.color);
-    }
+    if (parsed) applyParsedContent(parsed);
 
     fileHandle = handle;
     fileName = handle.name;
@@ -1473,7 +1505,7 @@
     updateReconnectButton();
     currentKey = '';
     render();
-    await storeHandle(handle);
+    if (!handle.bridge) await storeHandle(handle);
 
     const stats = countData();
     setNotice((loadContent ? '已打开 ' : '已连接 ') + fileName + ' · ' +
@@ -1481,7 +1513,38 @@
     if (needsSync) scheduleSync();
   }
 
+  async function attachBridgeFile(name, loadContent) {
+    await attachHandle({ bridge: true, name: name || '人生日历.md' }, loadContent);
+  }
+
+  async function chooseSaveLocationViaBridge() {
+    setNotice('正在打开保存位置选择器…', false);
+    const res = await bridgeCallChecked(function () {
+      return LifeBridgeClient.pickSaveLocation(fileName || '人生日历.md');
+    });
+    if (res.canceled) {
+      setNotice('已取消选择保存位置', false);
+      return;
+    }
+    if (!res.ok) {
+      setNotice('无法选择保存位置：' + (res.error || '未知错误'), true);
+      return;
+    }
+    const write = await bridgeCallChecked(function () {
+      return LifeBridgeClient.writeFile(buildMarkdown());
+    });
+    if (!write.ok) {
+      setNotice('无法写入文件：' + (write.error || '未知错误'), true);
+      return;
+    }
+    await attachBridgeFile(res.name, false);
+  }
+
   async function chooseSaveLocation() {
+    if (bridgeReady()) {
+      await chooseSaveLocationViaBridge();
+      return;
+    }
     if (!supportsFsa) {
       setNotice('当前浏览器不支持自动同步，请使用「导出副本」', true);
       return;
@@ -1545,7 +1608,37 @@
     }, 8000);
   }
 
-  function openCalendarFile() {
+  async function openCalendarFile() {
+    if (bridgeReady()) {
+      setNotice('请选择要打开的 Markdown 文件…', false);
+      const res = await bridgeCallChecked(function () {
+        return LifeBridgeClient.openFile();
+      });
+      if (res.canceled) { setNotice('已取消打开文件', false); return; }
+      if (!res.ok) {
+        setNotice('打开文件失败：' + (res.error || '未知错误'), true);
+        return;
+      }
+      const parsed = parseMarkdown(res.text || '');
+      if (parsed.warnings) {
+        setNotice('跳过 ' + parsed.warnings + ' 处异常日期', false);
+      }
+      applyParsedContent(parsed);
+      fileHandle = { bridge: true, name: res.name };
+      fileName = res.name;
+      pendingHandle = null;
+      dirty = true;
+      editRevision += 1;
+      updateReconnectButton();
+      currentKey = '';
+      render();
+      refreshMovieEntry();
+      bridgeLibraryIds(4);
+      const stats = countData();
+      setNotice('已打开 ' + res.name + ' · ' + stats.years + ' 年 · ' + stats.days + ' 天记录', false);
+      syncToFile();
+      return;
+    }
     pickWithInput('请选择要打开的 Markdown 文件…');
   }
 
@@ -1578,6 +1671,15 @@
   }
 
   async function restoreStoredHandle() {
+    if (bridgeReady()) {
+      const res = await bridgeCallChecked(function () {
+        return LifeBridgeClient.restoreSavedFile();
+      });
+      if (res.ok && res.name) {
+        await attachBridgeFile(res.name, true);
+      }
+      return;
+    }
     if (!supportsFsa) return;
     const handle = await loadStoredHandle();
     if (!handle) return;
@@ -5179,5 +5281,33 @@
   window.addEventListener('resize', scheduleWeatherOverlaySize);
   render();
   openMovieFromQuery();
-  restoreStoredHandle();
+  LifeBridgeClient.detect().then(function () {
+    if (bridgeReady()) {
+      saveAsBtn.hidden = false;
+      setupShellUpdate();
+    }
+    restoreStoredHandle();
+  });
+
+  function setupShellUpdate() {
+    LifeBridgeClient.checkUpdate().then(function (res) {
+      if (!res || !res.ok || !res.hasUpdate) return;
+      updateBtn.hidden = false;
+      updateBtn.textContent = '一键更新 v' + res.latest;
+      updateBtn.addEventListener('click', function () {
+        updateBtn.disabled = true;
+        updateBtn.textContent = '正在更新…';
+        LifeBridgeClient.applyUpdate().then(function (r) {
+          updateBtn.disabled = false;
+          if (r && r.ok) {
+            updateBtn.textContent = '已更新';
+            setNotice(r.message || '更新完成', false);
+          } else {
+            updateBtn.textContent = '一键更新';
+            setNotice((r && r.error) || '更新失败，请稍后再试', true);
+          }
+        });
+      });
+    });
+  }
 })();

@@ -1,0 +1,16 @@
+{
+  "version": "1.0.0",
+  "notes": "v1.0.0",
+  "windows": {
+    "file": "人生日历-1.0.0-x64.exe",
+    "url": "release/人生日历-1.0.0-x64.exe",
+    "size": 16801281,
+    "sha256": "180165fceda0221f23be52a17f1fc1ac2eb0c5979c2f1fb90f3f99027d6dabe9"
+  },
+  "android": {
+    "file": "人生日历-1.0.0.apk",
+    "url": "release/人生日历-1.0.0.apk",
+    "size": 3373887,
+    "sha256": "f7742efc7bb49da89be8f97f4cd625dfcd718bce1791feb51de50549f96a957d"
+  }
+}

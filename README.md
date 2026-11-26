@@ -154,5 +154,32 @@ assets/vendor/         Vditor（IR 编辑器）、marked（回顾解析）与 DO
 ```
 
 ## 部署
-
 本站是纯静态站点，可直接放到任意静态托管（Nginx、对象存储、GitHub / GitLab Pages 等）。仓库不包含自动部署流水线；部署后请使用 HTTPS 域名，否则浏览器不会开放文件自动同步能力。
+
+
+## 桌面端与安卓端（可下载的软件）
+
+除网页外，项目可以打包成独立安装的软件，用户下载后开箱即用，并通过「一键更新」自动升级：
+
+- **Windows 桌面端**：`人生日历-<版本>-x64.exe`，单文件、免安装、双击即用（Edge WebView2 渲染，Win10/11 自带运行时）。文件选择、读写走原生对话框，不再依赖浏览器的 File System Access 权限。
+- **Android 端**：`人生日历-<版本>.apk`，WebView 壳 + 系统文件选择器（SAF）读写 MD。日历文件放在用户自选的位置（如「下载」目录），卸载重装不影响数据。
+
+### 一键更新
+
+两端启动时都会读取 GitHub Pages 上的 `release/version.json`；发现新版本时顶栏出现「一键更新 vX.Y.Z」按钮：
+
+- 桌面端点击后：下载新 exe（带 sha256 校验）→ 改名替换运行中的程序 → 自动重启新版本 → 启动时删除旧 `.old.exe` 残留；下载的临时安装包在更新完成后自动清理，不占磁盘。
+- 安卓端点击后：下载新 apk（带 sha256 校验）→ 拉起系统安装器确认覆盖安装 → 旧版本被系统替换，缓存目录中的安装包由系统定期回收。手机上「未知来源」权限只需对首次安装授予一次，覆盖更新不再询问。
+
+### 构建与发布
+
+```bash
+python build.py              # 构建桌面 exe + 安卓 apk，刷新 release/（版本不变）
+python build.py --bump patch # 版本 +0.0.1 再构建（minor/major 同理）
+git add release/ && git commit -m "v1.0.1" && git push origin github
+```
+
+推送后 GitHub Pages 自动生效，所有已安装客户端在下次启动时收到更新提示。`release/` 里永远只有最新版本的安装包，旧版本在每次构建时自动清理。
+
+构建依赖（全部落在项目内 `.tools/`，不污染系统、不入库）：JDK 17、Android SDK 34、Gradle 8.7、Python 3.12 + pywebview/pyinstaller。首次构建会自动下载安卓签名密钥到 `android/keystore/`（不入库，务必自行备份；丢失后安卓端需卸载重装才能升级）。
+

@@ -1,0 +1,51 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+android {
+    namespace 'com.xiexiangyan.lifecalendar'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.xiexiangyan.lifecalendar"
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName "0.0.0"
+    }
+
+    signingConfigs {
+        release {
+            storeFile file('../keystore/life.jks')
+            storePassword 'lifecalendar'
+            keyAlias 'life'
+            keyPassword 'lifecalendar'
+        }
+    }
+    buildTypes {
+        release {
+            signingConfig signingConfigs.release
+            minifyEnabled false
+            shrinkResources false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+}
+
+dependencies {
+    constraints {
+        implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.9.24")
+        implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.9.24")
+    }
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation 'androidx.webkit:webkit:1.11.0'
+    implementation 'androidx.core:core:1.13.1'
+}
