@@ -60,3 +60,17 @@ coll = COLLECT(
     upx_exclude=[],
     name="人生日历",
 )
+
+# .NET Framework 需要与 exe 同级的 <exe>.config 才生效：
+# 从浏览器下载的 zip 解压后程序集带 Mark-of-the-Web，默认策略会拒绝 Assembly.LoadFrom。
+APP_CONFIG = """<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+  <startup useLegacyV2RuntimeActivationPolicy="true">
+    <supportedRuntime version="v4.0" sku=".NETFramework,Version=v4.7.2" />
+  </startup>
+  <runtime>
+    <loadFromRemoteSources enabled="true" />
+  </runtime>
+</configuration>
+"""
+(Path(DISTPATH) / "人生日历" / "人生日历.exe.config").write_text(APP_CONFIG, encoding="utf-8")

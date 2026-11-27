@@ -49,9 +49,10 @@ def _webview():
 VERSION = "0.0.0"
 VERSION_URL = "https://pass-you.github.io/life/release/version.json"
 
-# 资源目录：onedir 模式下资源在 exe 同级目录，源码运行时在项目根
+# 资源目录：PyInstaller onedir 把 datas 放进 _internal（sys._MEIPASS），
+# 只认 exe 同级目录会读不到 index.html；源码运行时在项目根。
 if getattr(sys, "frozen", False):
-    RESOURCE_DIR = Path(sys.executable).resolve().parent
+    RESOURCE_DIR = Path(getattr(sys, "_MEIPASS", None) or Path(sys.executable).resolve().parent)
     VERSION_FILE = RESOURCE_DIR / "version.json"
 else:
     RESOURCE_DIR = Path(__file__).resolve().parent.parent
@@ -546,6 +547,34 @@ def show_message(title: str, text: str, error: bool = True) -> None:
 WEB_URL = "https://pass-you.github.io/life/"
 
 
+def strip_motw() -> None:
+    """删除安装目录里的 Mark-of-the-Web 标记。
+
+    从浏览器下载 zip 再解压时，Windows 会给每个文件写 Zone.Identifier，
+    .NET Framework 随后拒绝 Assembly.LoadFrom 这些程序集（pythonnet/WebView2），
+    导致「Failed to resolve Python.Runtime.Loader.Initialize」。目录不可写时静默跳过，
+    由随包的 exe.config（loadFromRemoteSources）兜底。
+    """
+    if not getattr(sys, "frozen", False):
+        return
+    try:
+        import ctypes
+
+        delete = ctypes.windll.kernel32.DeleteFileW
+    except Exception:  # noqa: BLE001 非 Windows / 无 kernel32
+        return
+    cleaned = 0
+    for dirpath, _dirs, files in os.walk(RESOURCE_DIR):
+        for name in files:
+            try:
+                if delete(str(Path(dirpath) / name) + ":Zone.Identifier"):
+                    cleaned += 1
+            except Exception:  # noqa: BLE001 单文件失败不影响启动
+                pass
+    if cleaned:
+        log_line("已解除 %d 个文件的下载标记（Mark-of-the-Web）" % cleaned)
+
+
 def ask_open_web(reason: str) -> None:
     """桌面窗口起不来时给一次中文说明，并让用户选择是否打开在线版。"""
     log_line("窗口启动失败：%s" % reason)
@@ -582,6 +611,7 @@ def run_pywebview(url: str) -> None:
 
 
 def main() -> int:
+    strip_motw()
     parser = argparse.ArgumentParser(description=APP_NAME + " 桌面版")
     parser.add_argument("--cleanup", nargs="*", default=[], help="清理更新残留文件")
     parser.add_argument("--port", type=int, default=0, help="调试用固定端口")
