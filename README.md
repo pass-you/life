@@ -168,6 +168,8 @@ assets/vendor/         Vditor（IR 编辑器）、marked（回顾解析）与 DO
 | Windows 10/11 | `人生日历-<版本>-x64.exe` | 单文件免安装，双击即用 |
 | Android | `人生日历-<版本>.apk` | 允许「未知来源」安装一次即可 |
 
+> GitHub Releases 会剥离附件名中的中文，Release 附件以 `LifeCalendar-<版本>-…` 命名，下载后可改回中文原名；仓库 `release/` 目录与 GitHub Pages 直链保留中文原名。
+
 除网页外，项目可以打包成独立安装的软件，用户下载后开箱即用，并通过「一键更新」自动升级：
 
 - **Windows 桌面端**：`人生日历-<版本>-x64.exe`，单文件、免安装、双击即用（Edge WebView2 渲染，Win10/11 自带运行时）。文件选择、读写走原生对话框，不再依赖浏览器的 File System Access 权限。
