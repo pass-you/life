@@ -2,25 +2,18 @@
 # -*- coding: utf-8 -*-
 """人生日历 · 一键构建桌面端 + 安卓端
 
-    python build.py                # 构建两端并刷新 release/
-    python build.py --bump patch   # 版本 +0.0.1 再构建
-    python build.py --bump minor   # 版本 +0.1.0 再构建
-
-产物（release/，随 git push 发布到 GitHub Pages）：
-    release/version.json           版本清单（含 sha256 / 大小）
-    release/人生日历-<版本>-x64.exe   Windows 桌面端
-    release/人生日历-<版本>.apk       Android 端
-
-旧版本文件构建时自动清理，下载端只保留最新。
-签名 keystore 首次自动生成到 android/keystore/（不进 git），
-本机构建签名稳定，安卓覆盖安装升级不冲突。
+用法：
+  python build.py                # 按当前版本构建
+  python build.py --bump patch   # 自动递增补丁版本后构建
+  python build.py --bump minor
+  python build.py --bump major
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-import re
+import os
 import shutil
 import subprocess
 import sys
@@ -47,11 +40,15 @@ def current_version() -> str:
 
 def write_version(version: str) -> None:
     VERSION_FILE.write_text(json.dumps({"version": version}, ensure_ascii=False, indent=2), encoding="utf-8")
-    # 安卓 versionName 与 versionCode 同步：code 取 00000 格式（0.0.0 -> 0）
+    # 同步到安卓 build.gradle
     gradle = ROOT / "android" / "app" / "build.gradle"
     text = gradle.read_text(encoding="utf-8")
-    text = re.sub(r"versionCode \d+", "versionCode " + str(version_code(version)), text)
-    text = re.sub(r'versionName "[^"]+"', 'versionName "%s"' % version, text)
+    text = text.replace('versionName "1.0.0"', 'versionName "%s"' % version)
+    text = text.replace("versionName \"1.0.0\"", 'versionName "%s"' % version)
+    # 用正则替换更可靠
+    import re
+    text = re.sub(r'versionName\s+"[^"]*"', 'versionName "%s"' % version, text)
+    text = re.sub(r'versionCode\s+\d+', 'versionCode %d' % version_code(version), text)
     gradle.write_text(text, encoding="utf-8")
 
 
@@ -67,9 +64,12 @@ def bump(version: str, level: str) -> str:
     while len(parts) < 3:
         parts.append(0)
     if level == "major":
-        parts[0] += 1; parts[1] = 0; parts[2] = 0
+        parts[0] += 1
+        parts[1] = 0
+        parts[2] = 0
     elif level == "minor":
-        parts[1] += 1; parts[2] = 0
+        parts[1] += 1
+        parts[2] = 0
     else:
         parts[2] += 1
     return ".".join(str(x) for x in parts)
@@ -77,8 +77,8 @@ def bump(version: str, level: str) -> str:
 
 def sha256(path: Path) -> str:
     digest = hashlib.sha256()
-    with path.open("rb") as fh:
-        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
             digest.update(chunk)
     return digest.hexdigest()
 
@@ -88,22 +88,45 @@ def run(cmd: list[str], cwd: Path | None = None, env_extra: dict | None = None) 
     env = os.environ.copy()
     if env_extra:
         env.update(env_extra)
-    print(">>", " ".join(str(c) for c in cmd), flush=True)
-    proc = subprocess.run(cmd, cwd=str(cwd) if cwd else None, env=env)
+    proc = subprocess.run(cmd, cwd=cwd, env=env)
     if proc.returncode != 0:
         raise SystemExit("命令失败（exit %d）：%s" % (proc.returncode, " ".join(str(c) for c in cmd)))
 
 
 def build_desktop(version: str) -> Path:
+    """构建桌面端，生成安装包（zip 压缩的文件夹结构）"""
     RELEASE.mkdir(parents=True, exist_ok=True)
-    out = ROOT / "desktop" / "dist" / "人生日历.exe"
-    if out.exists():
-        out.unlink()
+    
+    # 清理旧的构建产物
+    dist_dir = ROOT / "desktop" / "dist"
+    if dist_dir.exists():
+        shutil.rmtree(dist_dir)
+    
+    # PyInstaller 构建
     run([sys.executable, "-m", "PyInstaller", "--clean", "--noconfirm", "life.spec"], cwd=ROOT / "desktop")
-    if not out.exists():
-        raise SystemExit("桌面端构建失败：找不到 " + str(out))
-    target = RELEASE / ("人生日历-%s-x64.exe" % version)
-    shutil.copy2(out, target)
+    
+    # 检查输出文件夹
+    app_folder = dist_dir / "人生日历"
+    if not app_folder.exists():
+        raise SystemExit("桌面端构建失败：找不到 " + str(app_folder))
+    
+    # 打包成 zip 安装包
+    target = RELEASE / ("人生日历-%s-x64.zip" % version)
+    if target.exists():
+        target.unlink()
+    
+    # 创建 zip 文件
+    import zipfile
+    with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as zf:
+        for root_path, dirs, files in os.walk(app_folder):
+            for file in files:
+                file_path = Path(root_path) / file
+                arcname = "人生日历/" + str(file_path.relative_to(app_folder)).replace("\\", "/")
+                zf.write(file_path, arcname)
+    
+    if not target.exists():
+        raise SystemExit("安装包生成失败：" + str(target))
+    
     return target
 
 
@@ -154,20 +177,20 @@ def build_android(version: str) -> Path:
     return target
 
 
-def refresh_release(version: str, notes: str, win_exe: Path, apk: Path) -> None:
+def refresh_release(version: str, notes: str, win_zip: Path, apk: Path) -> None:
     RELEASE.mkdir(exist_ok=True)
     # 清理旧版本文件（只保留本次产物 + version.json）
     for item in RELEASE.iterdir():
-        if item.is_file() and item.name not in (win_exe.name, apk.name, "version.json"):
+        if item.is_file() and item.name not in (win_zip.name, apk.name, "version.json"):
             item.unlink()
     manifest = {
         "version": version,
         "notes": notes,
         "windows": {
-            "file": win_exe.name,
-            "url": "release/" + win_exe.name,
-            "size": win_exe.stat().st_size,
-            "sha256": sha256(win_exe),
+            "file": win_zip.name,
+            "url": "release/" + win_zip.name,
+            "size": win_zip.stat().st_size,
+            "sha256": sha256(win_zip),
         },
         "android": {
             "file": apk.name,
@@ -205,13 +228,13 @@ def main() -> int:
         print("版本：%s" % version)
 
     sync_android_assets()
-    win_exe = build_desktop(version)
-    print("桌面端：%s" % win_exe.name)
+    win_zip = build_desktop(version)
+    print("桌面端：%s" % win_zip.name)
     apk = build_android(version)
     print("安卓端：%s" % apk.name)
 
     notes = "v" + version
-    refresh_release(version, notes, win_exe, apk)
+    refresh_release(version, notes, win_zip, apk)
     print("release/version.json 已刷新，旧版本文件已清理")
     print("推送即可发布：git add release/ && git commit -m 'v%s' && git push origin github" % version)
     return 0

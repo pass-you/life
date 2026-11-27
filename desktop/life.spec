@@ -1,6 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
-# PyInstaller 打包配置：人生日历桌面版（单文件 exe）
-# 站点资源（index.html、assets/）随包携带，桥版本号放包外由构建写入。
+# PyInstaller 打包配置：人生日历桌面版（文件夹模式）
+# 生成 人生日历/ 文件夹，内含 exe + 依赖文件，更符合正规软件结构。
 
 import json
 from pathlib import Path
@@ -37,10 +37,8 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
     [],
+    exclude_binaries=True,
     name="人生日历",
     debug=False,
     bootloader_ignore_signals=False,
@@ -50,4 +48,15 @@ exe = EXE(
     console=False,
     icon=str(SITE / "assets" / "favicon.ico") if (SITE / "assets" / "favicon.ico").exists() else None,
     version=str(Path(SPECPATH).resolve() / "version_info.txt") if (Path(SPECPATH) / "version_info.txt").exists() else None,
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    strip=False,
+    upx=False,
+    upx_exclude=[],
+    name="人生日历",
 )

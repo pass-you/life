@@ -9,7 +9,7 @@
 
 启动参数：
   python main.py                      正常启动
-  python main.py --cleanup A B        启动前清理更新残留（旧 exe、临时安装包）
+  python main.py --cleanup A B        启动前清理更新残留（旧目录、临时安装包）
 """
 
 from __future__ import annotations
@@ -23,9 +23,11 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.request
+import zipfile
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -38,10 +40,10 @@ APP_ID = "LifeCalendar"
 VERSION = "0.0.0"
 VERSION_URL = "https://pass-you.github.io/life/release/version.json"
 
-# 资源目录：PyInstaller onefile 下在 _MEIPASS/site，源码运行时在 ../（项目根）
+# 资源目录：onedir 模式下资源在 exe 同级目录，源码运行时在项目根
 if getattr(sys, "frozen", False):
-    RESOURCE_DIR = Path(sys._MEIPASS)  # spec 把站点放在包根
-    VERSION_FILE = Path(sys._MEIPASS) / "version.json"
+    RESOURCE_DIR = Path(sys.executable).resolve().parent
+    VERSION_FILE = RESOURCE_DIR / "version.json"
 else:
     RESOURCE_DIR = Path(__file__).resolve().parent.parent
     VERSION_FILE = Path(__file__).resolve().parent / "version.json"
@@ -330,23 +332,88 @@ class Bridge:
         url = self._release_url(url)
 
         expected = win.get("sha256", "")
-        target = Path(os.environ.get("TEMP", str(Path.home()))) / "LifeCalendar-new.exe"
-        digest = download(url, target, expected)
+        
+        # 下载 zip 安装包到临时目录
+        temp_dir = Path(tempfile.gettempdir()) / "LifeCalendar-update"
+        if temp_dir.exists():
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        
+        zip_path = temp_dir / "update.zip"
+        digest = download(url, zip_path, expected)
 
+        # 解压到临时目录
+        extract_dir = temp_dir / "new"
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            zf.extractall(extract_dir)
+        
+        # 找到解压后的应用目录（应该是 "人生日历/"）
+        app_dir = None
+        for item in extract_dir.iterdir():
+            if item.is_dir() and item.name == "人生日历":
+                app_dir = item
+                break
+        
+        if app_dir is None:
+            raise RuntimeError("安装包格式异常：找不到应用目录")
+
+        # 当前安装目录
         current_exe = Path(sys.executable).resolve()
-        old_exe = current_exe.with_suffix(".old.exe")
+        install_dir = current_exe.parent  # 当前 exe 所在的目录
 
-        # 运行中的 exe 不能删除/覆盖，但可以改名（Windows 允许）。
-        if old_exe.exists():
-            os.unlink(old_exe)
-        os.rename(current_exe, old_exe)
-        os.replace(target, current_exe)
+        # 创建批处理脚本来执行替换
+        # 批处理会：等待当前进程退出 → 删除旧目录 → 移动新目录 → 启动新 exe → 删除自身
+        bat_path = temp_dir / "update.bat"
+        old_dir_name = install_dir.name  # 当前目录名（如 "人生日历"）
+        parent_dir = install_dir.parent  # 父目录
+        
+        bat_content = f'''@echo off
+chcp 65001 >nul
+echo 正在更新人生日历...
 
-        # 启动新版本，带清理参数（清旧 exe + 校验残留），然后退出自己。
-        subprocess.Popen([str(current_exe), "--cleanup", str(old_exe)],
-                         close_fds=True, creationflags=get_creation_flags())
-        threading.Timer(0.8, quit_app, args=(self.window_holder,)).start()
-        return result(message="已更新到 " + manifest.get("version", "?") +
+REM 等待当前进程退出
+timeout /t 2 /nobreak >nul
+:wait_loop
+tasklist /FI "IMAGENAME eq {current_exe.name}" 2>NUL | find /I "{current_exe.name}" >NUL
+if NOT ERRORLEVEL 1 (
+    timeout /t 1 /nobreak >nul
+    goto wait_loop
+)
+
+REM 删除旧版本目录
+if exist "{install_dir}" (
+    rmdir /s /q "{install_dir}" 2>nul
+)
+
+REM 移动新版本到安装位置
+if exist "{app_dir}" (
+    move "{app_dir}" "{install_dir}" >nul
+)
+
+REM 启动新版本
+start "" "{current_exe}"
+
+REM 清理临时文件
+rmdir /s /q "{temp_dir}" 2>nul
+
+REM 删除自身
+del "%~f0" 2>nul
+'''
+        bat_path.write_text(bat_content, encoding="utf-8")
+
+        # 启动批处理脚本（隐藏窗口）
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = 0  # SW_HIDE
+        subprocess.Popen(
+            ["cmd.exe", "/c", str(bat_path)],
+            startupinfo=startupinfo,
+            creationflags=get_creation_flags()
+        )
+
+        # 退出当前应用
+        threading.Timer(0.5, quit_app, args=(self.window_holder,)).start()
+        return result(message="正在更新到 " + manifest.get("version", "?") +
                       (digest and "（校验通过）" or ""), version=manifest.get("version"))
 
 
@@ -379,7 +446,7 @@ def re_split(v: str):
 
 def download(url: str, target: Path, expected_sha256: str) -> str:
     request = urllib.request.Request(url, headers={"User-Agent": "LifeCalendar/" + VERSION})
-    with urllib.request.urlopen(request, timeout=60) as response:
+    with urllib.request.urlopen(request, timeout=120) as response:
         data = response.read()
     import hashlib
     digest = hashlib.sha256(data).hexdigest()
@@ -411,7 +478,9 @@ def cleanup_files(paths: list[str]) -> None:
         p = Path(raw)
         for _ in range(40):
             try:
-                if p.exists():
+                if p.exists() and p.is_dir():
+                    shutil.rmtree(p, ignore_errors=True)
+                elif p.exists():
                     p.unlink()
                 break
             except OSError:
@@ -427,10 +496,8 @@ def main() -> int:
     if args.cleanup:
         cleanup_files([p for p in args.cleanup if p])
 
-    # 每次启动清理更新残留：异常中断留下的下载安装包、旧版本 exe（正常更新由 --cleanup 删，这里兜底）
-    leftovers = [str(Path(os.environ.get("TEMP", str(Path.home()))) / "LifeCalendar-new.exe")]
-    if getattr(sys, "frozen", False):
-        leftovers.append(str(Path(sys.executable).resolve().with_suffix(".old.exe")))
+    # 每次启动清理更新残留
+    leftovers = [str(Path(tempfile.gettempdir()) / "LifeCalendar-update")]
     cleanup_files(leftovers)
 
     server, url = start_server()
