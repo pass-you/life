@@ -1,0 +1,41 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "已存在的 tag，如 v1.1.0"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          ZIP="release/人生日历-${VERSION}-x64.zip"
+          APK="release/人生日历-${VERSION}.apk"
+          for f in "$ZIP" "$APK"; do
+            test -f "$f" || { echo "missing asset: $f"; ls -la release; exit 1; }
+          done
+          gh release view "$TAG" >/dev/null 2>&1 && gh release delete "$TAG" --yes --cleanup-tag=false || true
+          gh release create "$TAG" \
+            --title "人生日历 ${VERSION}" \
+            --generate-notes \
+            "${ZIP}#LifeCalendar-${VERSION}-x64.zip" \
+            "${APK}#LifeCalendar-${VERSION}.apk"
