@@ -187,7 +187,7 @@ assets/vendor/         Vditor（IR 编辑器）、marked（回顾解析）与 DO
 ```bash
 python build.py              # 构建桌面 exe + 安卓 apk，刷新 release/（版本不变）
 python build.py --bump patch # 版本 +0.0.1 再构建（minor/major 同理）
-git add release/ && git commit -m "v1.0.1" && git push origin github
+git add release/ && git commit -m "v1.0.2" && git push origin github
 ```
 
 推送后 GitHub Pages 自动生效，所有已安装客户端在下次启动时收到更新提示。`release/` 里永远只有最新版本的安装包，旧版本在每次构建时自动清理。
