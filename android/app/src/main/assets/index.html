@@ -44,9 +44,24 @@
         <button type="button" class="btn btn-sm" id="openBtn">打开 MD</button>
         <button type="button" class="btn btn-sm" id="exportBtn">导出副本</button>
         <button type="button" class="btn btn-sm" id="reconnectBtn" hidden>恢复同步</button>
-        <button type="button" class="btn btn-sm" id="updateBtn" hidden>一键更新</button>
         <input id="fileInput" type="file" accept=".md,.markdown,.txt,text/markdown" hidden>
       </div>
+    </div>
+
+    <!-- 应用内更新提醒：圆形箭头徽标 + 气泡提示（仅壳内出现） -->
+    <div id="updateBadge" class="update-badge" hidden>
+      <div class="update-badge-main">
+        <button type="button" class="update-badge-btn" id="updateBadgeBtn" aria-label="一键更新到新版本">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+            <path d="M12 5.5v11M12 5.5l-5 5M12 5.5l5 5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+        <div class="update-badge-text">
+          <span class="update-badge-title" id="updateBadgeTitle">新版本</span>
+          <span class="update-badge-action" id="updateBadgeAction">重启更新</span>
+        </div>
+      </div>
+      <div class="update-badge-bubble" id="updateBadgeBubble" aria-hidden="true">点击查看更新</div>
     </div>
 
     <main id="app" tabindex="-1"></main>

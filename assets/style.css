@@ -2280,6 +2280,162 @@ body.modal-open {
   color: var(--muted);
 }
 
+/* ---------- 更新提醒徽标 ---------- */
+
+.update-badge {
+  position: fixed;
+  left: 18px;
+  bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  animation: update-badge-in 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.update-badge[hidden] {
+  display: none;
+}
+
+.update-badge-main {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+}
+
+@keyframes update-badge-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.update-badge-btn {
+  flex: none;
+  width: 52px;
+  height: 52px;
+  border: none;
+  border-radius: 50%;
+  background: #21a145;
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 6px 18px rgba(33, 161, 69, 0.35);
+  transition: transform 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
+  animation: update-badge-pulse 2.4s ease-in-out infinite;
+}
+
+.update-badge-btn:hover {
+  background: #1c8e3c;
+  transform: translateY(-2px) scale(1.05);
+  box-shadow: 0 10px 24px rgba(33, 161, 69, 0.42);
+}
+
+.update-badge-btn:active {
+  transform: scale(0.96);
+}
+
+.update-badge-btn:disabled {
+  animation: none;
+  opacity: 0.65;
+  cursor: default;
+  transform: none;
+}
+
+@keyframes update-badge-pulse {
+  0%, 100% {
+    box-shadow: 0 6px 18px rgba(33, 161, 69, 0.35), 0 0 0 0 rgba(33, 161, 69, 0.3);
+  }
+  50% {
+    box-shadow: 0 6px 18px rgba(33, 161, 69, 0.35), 0 0 0 9px rgba(33, 161, 69, 0);
+  }
+}
+
+.update-badge-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  line-height: 1.35;
+}
+
+.update-badge-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #21a145;
+}
+
+.update-badge-action {
+  font-size: 12px;
+  color: #21a145;
+  cursor: pointer;
+}
+
+.update-badge-action:hover {
+  text-decoration: underline;
+}
+
+.update-badge-bubble {
+  position: relative;
+  margin-left: 4px;
+  padding: 9px 16px;
+  border-radius: 10px;
+  background: #26241f;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+  box-shadow: 0 8px 22px rgba(40, 30, 30, 0.28);
+  cursor: pointer;
+  transition: transform 0.18s ease, opacity 0.25s ease;
+  animation: update-bubble-in 0.5s cubic-bezier(0.22, 1, 0.36, 1) 0.15s both;
+}
+
+.update-badge-bubble::before {
+  content: "";
+  position: absolute;
+  left: -7px;
+  top: 50%;
+  transform: translateY(-50%) rotate(45deg);
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  background: #26241f;
+}
+
+.update-badge-bubble:hover {
+  transform: translateY(-1px);
+}
+
+@keyframes update-bubble-in {
+  from {
+    opacity: 0;
+    transform: translateX(-10px) scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.update-badge.is-busy .update-badge-bubble,
+.update-badge.is-done .update-badge-bubble {
+  display: none;
+}
+
+.update-badge.is-done .update-badge-btn {
+  animation: none;
+  background: #8d8286;
+  box-shadow: none;
+}
+
 /* ---------- 响应式 ---------- */
 
 @media (max-width: 860px) {

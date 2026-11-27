@@ -427,6 +427,9 @@ def main() -> int:
     if args.cleanup:
         cleanup_files([p for p in args.cleanup if p])
 
+    # 每次启动清理上次更新可能残留的下载安装包（正常更新会被改名顶替，异常中断才留下）
+    cleanup_files([str(Path(os.environ.get("TEMP", str(Path.home()))) / "LifeCalendar-new.exe")])
+
     server, url = start_server()
 
     window_holder: dict = {}

@@ -536,7 +536,11 @@
   const exportBtn = document.getElementById('exportBtn');
   const reconnectBtn = document.getElementById('reconnectBtn');
   const fileInput = document.getElementById('fileInput');
-  const updateBtn = document.getElementById('updateBtn');
+  const updateBadge = document.getElementById('updateBadge');
+  const updateBadgeBtn = document.getElementById('updateBadgeBtn');
+  const updateBadgeTitle = document.getElementById('updateBadgeTitle');
+  const updateBadgeAction = document.getElementById('updateBadgeAction');
+  const updateBadgeBubble = document.getElementById('updateBadgeBubble');
 
   /* ---------------- 日期工具 ---------------- */
 
@@ -5338,22 +5342,37 @@
   function setupShellUpdate() {
     LifeBridgeClient.checkUpdate().then(function (res) {
       if (!res || !res.ok || !res.hasUpdate) return;
-      updateBtn.hidden = false;
-      updateBtn.textContent = '一键更新 v' + res.latest;
-      updateBtn.addEventListener('click', function () {
-        updateBtn.disabled = true;
-        updateBtn.textContent = '正在更新…';
+      updateBadge.hidden = false;
+      updateBadgeTitle.textContent = '新版本 v' + res.latest;
+      var busy = false;
+
+      function startUpdate() {
+        if (busy) return;
+        busy = true;
+        updateBadge.classList.add('is-busy');
+        updateBadgeBtn.disabled = true;
+        updateBadgeAction.textContent = '正在更新…';
         LifeBridgeClient.applyUpdate().then(function (r) {
-          updateBtn.disabled = false;
           if (r && r.ok) {
-            updateBtn.textContent = '已更新';
-            setNotice(r.message || '更新完成', false);
+            updateBadge.classList.remove('is-busy');
+            updateBadge.classList.add('is-done');
+            updateBadgeTitle.textContent = '已更新';
+            updateBadgeAction.textContent = '重启更新';
+            updateBadgeBtn.disabled = false;
+            setNotice(r.message || '更新完成，即将重启', false);
           } else {
-            updateBtn.textContent = '一键更新';
+            busy = false;
+            updateBadge.classList.remove('is-busy');
+            updateBadgeBtn.disabled = false;
+            updateBadgeAction.textContent = '重启更新';
             setNotice((r && r.error) || '更新失败，请稍后再试', true);
           }
         });
-      });
+      }
+
+      updateBadgeBtn.addEventListener('click', startUpdate);
+      updateBadgeAction.addEventListener('click', startUpdate);
+      updateBadgeBubble.addEventListener('click', startUpdate);
     });
   }
 })();

@@ -17,3 +17,6 @@ android/app/build/
 android/local.properties
 android/keystore/
 assets/favicon-256.png
+
+# File System Access 交换文件
+*.crswap

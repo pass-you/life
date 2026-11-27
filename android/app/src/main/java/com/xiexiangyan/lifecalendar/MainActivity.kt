@@ -76,6 +76,17 @@ class MainActivity : AppCompatActivity() {
         webView.loadUrl("https://appassets.androidplatform.net/assets/index.html")
 
         restoreSavedUri()
+        cleanupUpdateLeftovers()
+    }
+
+    /** 更新完成后清理残留：上次更新下载的安装包在新版启动时删除，不留在磁盘。 */
+    private fun cleanupUpdateLeftovers() {
+        try {
+            val stale = File(cacheDir, "LifeCalendar-new.apk")
+            if (stale.exists()) stale.delete()
+        } catch (e: Exception) {
+            Log.w(TAG, "清理更新残留失败: ${e.message}")
+        }
     }
 
     // ---------------- SAF 文件选择 ----------------
