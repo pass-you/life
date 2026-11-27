@@ -21,6 +21,16 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Stage assets with ASCII names
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          cp "release/人生日历-${VERSION}-x64.zip" "LifeCalendar-${VERSION}-x64.zip"
+          cp "release/人生日历-${VERSION}.apk" "LifeCalendar-${VERSION}.apk"
+          ls -la LifeCalendar-*
+
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -28,14 +38,12 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${TAG#v}"
-          ZIP="release/人生日历-${VERSION}-x64.zip"
-          APK="release/人生日历-${VERSION}.apk"
-          for f in "$ZIP" "$APK"; do
-            test -f "$f" || { echo "missing asset: $f"; ls -la release; exit 1; }
-          done
-          gh release view "$TAG" >/dev/null 2>&1 && gh release delete "$TAG" --yes --cleanup-tag=false || true
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release delete "$TAG" --yes --cleanup-tag=false
+          fi
           gh release create "$TAG" \
             --title "人生日历 ${VERSION}" \
             --generate-notes \
-            "${ZIP}#LifeCalendar-${VERSION}-x64.zip" \
-            "${APK}#LifeCalendar-${VERSION}.apk"
+            --latest \
+            "LifeCalendar-${VERSION}-x64.zip" \
+            "LifeCalendar-${VERSION}.apk"
