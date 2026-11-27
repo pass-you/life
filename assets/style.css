@@ -1931,6 +1931,13 @@ body.modal-open {
   white-space: nowrap;
 }
 
+.expense-breakdown {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
 .expense-list {
   display: flex;
   flex-direction: column;
@@ -1972,9 +1979,32 @@ body.modal-open {
   background: var(--surface);
 }
 
-.expense-price span {
+/* 支出/进账切换钮：−¥ 支出（默认），+¥ 进账（退款等），点击互换。 */
+.expense-sign {
+  padding: 2px 4px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
   color: var(--muted);
+  font: inherit;
   font-size: 13px;
+  line-height: 1.2;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.expense-sign:hover {
+  background: var(--accent-ghost);
+  color: var(--accent-ink);
+}
+
+.expense-row.is-in .expense-sign {
+  color: #2e7d4f;
+  font-weight: 600;
+}
+
+.expense-row.is-in .expense-price input {
+  color: #2e7d4f;
 }
 
 .expense-price input {

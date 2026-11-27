@@ -653,7 +653,9 @@
     node.expenses = node.expenses.map(function (item) {
       return {
         name: item && typeof item.name === 'string' ? item.name : '',
-        price: item && Number.isFinite(item.price) ? Math.max(0, Math.round(item.price)) : 0
+        price: item && Number.isFinite(item.price) ? Math.max(0, Math.round(item.price)) : 0,
+        // 'in' 表示进账（退款、报销等），其余一律按支出处理（兼容旧文件）。
+        type: item && item.type === 'in' ? 'in' : 'out'
       };
     }).filter(function (item) {
       return !!(item.name || item.price);
@@ -1126,11 +1128,13 @@
   function parseExpenseLines(value) {
     const items = [];
     String(value || '').split('\n').forEach(function (line) {
-      const match = /^\s*-\s*(\d+(?:\.\d{1,2})?)\s*元(?:\s*[·:：]\s*(.*))?\s*$/.exec(line);
+      // 行首 + 表示进账（退款、报销等），无符号或 - 均为支出。
+      const match = /^\s*-\s*([+-]?)(\d+(?:\.\d{1,2})?)\s*元(?:\s*[·:：]\s*(.*))?\s*$/.exec(line);
       if (!match) return;
-      const name = (match[2] || '').trim();
-      const price = Math.max(0, Math.round(Number(match[1]) * 100));
-      if (name || price) items.push({ name: name, price: price });
+      const name = (match[3] || '').trim();
+      const price = Math.max(0, Math.round(Number(match[2]) * 100));
+      const type = match[1] === '+' ? 'in' : 'out';
+      if (name || price) items.push({ name: name, price: price, type: type });
     });
     return items;
   }
@@ -1148,11 +1152,27 @@
     });
   }
 
+  // 单日进账（退款、报销等）合计。
+  function dayInCents(node) {
+    if (!node || !Array.isArray(node.expenses)) return 0;
+    return node.expenses.reduce(function (sum, item) {
+      return sum + (item && item.type === 'in' && Number.isFinite(item.price) ? item.price : 0);
+    }, 0);
+  }
+
+  // 单日净支出：支出 - 进账，可能为负（当天进账多于支出）。
   function dayExpenseCents(node) {
     if (!node || !Array.isArray(node.expenses)) return 0;
     return node.expenses.reduce(function (sum, item) {
-      return sum + (item && Number.isFinite(item.price) ? item.price : 0);
+      if (!item || !Number.isFinite(item.price)) return sum;
+      return sum + (item.type === 'in' ? -item.price : item.price);
     }, 0);
+  }
+
+  function hasExpenseItems(node) {
+    return !!(node && Array.isArray(node.expenses) && node.expenses.some(function (item) {
+      return item && (item.name || item.price);
+    }));
   }
 
   function monthExpenseCents(node) {
@@ -2321,8 +2341,10 @@
     const net = income - expense;
     let days = '';
     for (let d = 1; d <= daysInMonth(year, month); d += 1) {
-      const cents = dayExpenseCents(node && node.days ? node.days[String(d)] : null);
-      if (cents > 0) {
+      const dNode = node && node.days ? node.days[String(d)] : null;
+      // 净支出为 0 但有记账（收支相抵）的天也列出。
+      const cents = dayExpenseCents(dNode);
+      if (cents !== 0 || hasExpenseItems(dNode)) {
         days += '<span class="finance-day"><span>' + d + ' 日</span><strong>' +
           formatCents(cents) + '</strong></span>';
       }
@@ -2621,9 +2643,9 @@
       ' 部 · 看过 ' + movies.watched + ' 部' +
       '" aria-label="找电影，想看 ' + movies.wish + ' 部，看过 ' + movies.watched + ' 部">' +
       FILM_ICON + '</button>' +
-      '<button type="button" class="expense-entry' + (expenseTotal > 0 ? ' has-expenses' : '') +
-      '" data-expense-open aria-haspopup="dialog" title="记账 · ' + formatCents(expenseTotal) +
-      '" aria-label="记账，今日支出 ' + formatCents(expenseTotal) + '">¥</button>' +
+      '<button type="button" class="expense-entry' + (hasExpenseItems(node) ? ' has-expenses' : '') +
+      '" data-expense-open aria-haspopup="dialog" title="记账 · 净支出 ' + formatCents(expenseTotal) +
+      '" aria-label="记账，今日净支出 ' + formatCents(expenseTotal) + '">¥</button>' +
       '<button type="button" class="btn" data-review aria-expanded="false" aria-controls="review-slot"' +
       (prev ? '' : ' disabled') + '>回顾昨天</button>' +
       '<div class="stepper">' +
@@ -2721,7 +2743,7 @@
   function openExpenseModal(year, month, day) {
     if (document.querySelector('.expense-modal')) return;
     const node = dayNode(year, month, day, true);
-    if (!node.expenses.length) node.expenses.push({ name: '', price: 0 });
+    if (!node.expenses.length) node.expenses.push({ name: '', price: 0, type: 'out' });
 
     const overlay = document.createElement('div');
     overlay.className = 'expense-modal';
@@ -2735,24 +2757,30 @@
       '<h2 id="expense-title">' + year + ' 年 ' + month + ' 月 ' + day + ' 日</h2>' +
       '<p class="sub">星期' + weekdayName(year, month, day) + '</p>' +
       '</div><button type="button" class="expense-close" aria-label="关闭记账">×</button></div>' +
-      '<div class="expense-summary"><div><span>今日总支出</span>' +
-      '<strong id="expense-total">' + formatCents(dayExpenseCents(node)) + '</strong></div>' +
+      '<div class="expense-summary"><div><span>今日净支出</span>' +
+      '<strong id="expense-total">' + formatCents(dayExpenseCents(node)) + '</strong>' +
+      '<span class="expense-breakdown" id="expense-breakdown"></span></div>' +
       '<span class="expense-count" id="expense-count">0 笔</span></div>' +
       '<div class="expense-list" id="expense-list"></div>' +
       '<button type="button" class="expense-add">＋ 添加一笔</button>' +
-      '<p class="expense-hint">收入在对应月页面填写；记账内容会随日历一起同步。</p>' +
+      '<p class="expense-hint">点 −¥ 可切换成 +¥ 记进账（退款、报销等）；月收入在月页面填写，记账内容会随日历一起同步。</p>' +
       '</div>';
     document.body.appendChild(overlay);
     document.body.classList.add('modal-open');
 
     const list = overlay.querySelector('#expense-list');
     const totalEl = overlay.querySelector('#expense-total');
+    const breakdownEl = overlay.querySelector('#expense-breakdown');
     const countEl = overlay.querySelector('#expense-count');
     const addButton = overlay.querySelector('.expense-add');
     const closeButton = overlay.querySelector('.expense-close');
 
     function updateTotals() {
-      totalEl.textContent = formatCents(dayExpenseCents(node));
+      const inCents = dayInCents(node);
+      const netCents = dayExpenseCents(node);
+      totalEl.textContent = formatCents(netCents);
+      breakdownEl.textContent = inCents > 0 ?
+        '支出 ' + formatCents(netCents + inCents) + ' · 进账 ' + formatCents(inCents) : '';
       const count = node.expenses.filter(function (item) {
         return item && (item.name || item.price);
       }).length;
@@ -2761,16 +2789,21 @@
 
     function renderRows(focusIndex) {
       if (!node.expenses.length) {
-        list.innerHTML = '<p class="expense-empty">还没有支出，添加第一笔。</p>';
+        list.innerHTML = '<p class="expense-empty">还没有记账，添加第一笔。</p>';
       } else {
         list.innerHTML = node.expenses.map(function (item, index) {
-          return '<div class="expense-row" data-index="' + index + '">' +
+          const isIn = item.type === 'in';
+          return '<div class="expense-row' + (isIn ? ' is-in' : '') + '" data-index="' + index + '">' +
             '<input class="expense-name" type="text" value="' + esc(item.name) +
             '" placeholder="物品名称" aria-label="第 ' + (index + 1) + ' 笔物品名称">' +
-            '<div class="expense-price"><span aria-hidden="true">¥</span>' +
+            '<div class="expense-price">' +
+            '<button type="button" class="expense-sign" data-sign-toggle ' +
+            'aria-label="第 ' + (index + 1) + ' 笔，' + (isIn ? '进账' : '支出') +
+            '，点击切换" title="' + (isIn ? '进账（退款等），点击改为支出' : '支出，点击改为进账') + '">' +
+            (isIn ? '+¥' : '−¥') + '</button>' +
             '<input class="expense-price-input" type="number" min="0" step="0.01" ' +
             'inputmode="decimal" value="' + (item.price ? (item.price / 100).toFixed(2) : '') +
-            '" placeholder="0.00" aria-label="第 ' + (index + 1) + ' 笔价格"></div>' +
+            '" placeholder="0.00" aria-label="第 ' + (index + 1) + ' 笔金额"></div>' +
             '<button type="button" class="expense-delete" aria-label="删除第 ' + (index + 1) +
             ' 笔" title="删除">×</button></div>';
         }).join('');
@@ -2787,7 +2820,8 @@
       node.expenses = node.expenses.map(function (item) {
         return {
           name: String(item.name || '').trim(),
-          price: Math.max(0, Math.round(item.price || 0))
+          price: Math.max(0, Math.round(item.price || 0)),
+          type: item.type === 'in' ? 'in' : 'out'
         };
       }).filter(function (item) {
         return item.name || item.price;
@@ -2800,9 +2834,9 @@
       const entry = app.querySelector('[data-expense-open]');
       if (entry) {
         const total = dayExpenseCents(node);
-        entry.classList.toggle('has-expenses', total > 0);
-        entry.title = '记账 · ' + formatCents(total);
-        entry.setAttribute('aria-label', '记账，今日支出 ' + formatCents(total));
+        entry.classList.toggle('has-expenses', hasExpenseItems(node));
+        entry.title = '记账 · 净支出 ' + formatCents(total);
+        entry.setAttribute('aria-label', '记账，今日净支出 ' + formatCents(total));
         entry.focus();
       }
     }
@@ -2836,6 +2870,17 @@
     });
 
     list.addEventListener('click', function (event) {
+      const signButton = event.target.closest('.expense-sign');
+      if (signButton) {
+        const row = signButton.closest('.expense-row');
+        const item = node.expenses[Number(row.dataset.index)];
+        if (item) {
+          item.type = item.type === 'in' ? 'out' : 'in';
+          renderRows();
+          markDirty();
+        }
+        return;
+      }
       const button = event.target.closest('.expense-delete');
       if (!button) return;
       const row = button.closest('.expense-row');
@@ -2845,7 +2890,7 @@
     });
 
     addButton.addEventListener('click', function () {
-      node.expenses.push({ name: '', price: 0 });
+      node.expenses.push({ name: '', price: 0, type: 'out' });
       renderRows(node.expenses.length - 1);
       markDirty();
     });
@@ -4720,7 +4765,8 @@
               const expenseLines = (dNode.expenses || []).filter(function (item) {
                 return item && (item.name || item.price);
               }).map(function (item) {
-                return '- ' + centsToYuan(item.price) + ' 元' +
+                // 进账（退款等）金额前加 +，读取时原样还原。
+                return '- ' + (item.type === 'in' ? '+' : '') + centsToYuan(item.price) + ' 元' +
                   (item.name ? ' · ' + item.name : '');
               }).join('\n');
               pushField(parts, '##### 今日支出', expenseLines);
