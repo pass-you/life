@@ -159,6 +159,15 @@ assets/vendor/         Vditor（IR 编辑器）、marked（回顾解析）与 DO
 
 ## 桌面端与安卓端（可下载的软件）
 
+### 下载入口
+
+前往 **[Releases 页面](https://github.com/pass-you/life/releases/latest)** 下载最新安装包（推荐入口，含版本说明与历史版本），也可以从仓库 `release/` 目录或 [GitHub Pages 直链](https://pass-you.github.io/life/release/)下载：
+
+| 平台 | 安装包 | 说明 |
+| --- | --- | --- |
+| Windows 10/11 | `人生日历-<版本>-x64.exe` | 单文件免安装，双击即用 |
+| Android | `人生日历-<版本>.apk` | 允许「未知来源」安装一次即可 |
+
 除网页外，项目可以打包成独立安装的软件，用户下载后开箱即用，并通过「一键更新」自动升级：
 
 - **Windows 桌面端**：`人生日历-<版本>-x64.exe`，单文件、免安装、双击即用（Edge WebView2 渲染，Win10/11 自带运行时）。文件选择、读写走原生对话框，不再依赖浏览器的 File System Access 权限。
