@@ -76,7 +76,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         webView.addJavascriptInterface(Bridge(), "LifeBridge")
-        webView.loadUrl("https://appassets.androidplatform.net/assets/index.html")
+        webView.loadUrl("https://appassets.androidplatform.net/index.html")
 
         restoreSavedUri()
         cleanupUpdateLeftovers()

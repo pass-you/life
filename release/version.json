@@ -4,13 +4,13 @@
   "windows": {
     "file": "人生日历-1.0.3-x64.zip",
     "url": "release/人生日历-1.0.3-x64.zip",
-    "size": 16723308,
-    "sha256": "7f744e2a12d7de588c2ade5581e0b313660479785e32501eef606007c0f16dd9"
+    "size": 9718814,
+    "sha256": "d19a6d9b49cc2748689dd9cbd2a18a0fb29e90b803eaf604d60239ba4ff1500f"
   },
   "android": {
     "file": "人生日历-1.0.3.apk",
     "url": "release/人生日历-1.0.3.apk",
-    "size": 3376687,
-    "sha256": "f7ce3deea2bc4ba594ebc30119a55caf4d047f4f2fecbf40743444f971a7534b"
+    "size": 3376611,
+    "sha256": "e9471bea34b7c6e0ffc1876a9f7684b5930e008acef2d5d1ab0e3988d681a242"
   }
 }
