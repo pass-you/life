@@ -4844,7 +4844,8 @@
       dNode.expenses = dNode.expenses.map(function (item) {
         return {
           name: item && typeof item.name === 'string' ? item.name : '',
-          price: item && Number.isFinite(item.price) ? Math.max(0, Math.round(item.price)) : 0
+          price: item && Number.isFinite(item.price) ? Math.max(0, Math.round(item.price)) : 0,
+          type: item && item.type === 'in' ? 'in' : 'out'
         };
       }).filter(function (item) { return !!(item.name || item.price); });
       // 旧版「今日电影」字段改由解析器迁移进「看过的电影」。
