@@ -26,6 +26,9 @@ class MainActivity : AppCompatActivity() {
     private var savedName: String = ""
     private var pendingCallId: String? = null
 
+    @Volatile
+    private var updateInFlight = false
+
     private val VERSION: String by lazy {
         try {
             packageManager.getPackageInfo(packageName, 0).versionName ?: "0.0.0"
@@ -81,6 +84,7 @@ class MainActivity : AppCompatActivity() {
 
     /** 更新完成后清理残留：上次更新下载的安装包在新版启动时删除，不留在磁盘。 */
     private fun cleanupUpdateLeftovers() {
+        if (updateInFlight) return  // 更新下载中，避免误删正在写入的安装包
         try {
             val stale = File(cacheDir, "LifeCalendar-new.apk")
             if (stale.exists()) stale.delete()
@@ -283,6 +287,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun applyUpdate(callId: String): String {
+        updateInFlight = true
         executor.execute {
             val result = try {
                 val manifest = JSONObject(httpGet(VERSION_URL))
@@ -296,6 +301,8 @@ class MainActivity : AppCompatActivity() {
                 "{\"ok\":true,\"message\":\"已下载 ${manifest.optString("version")}，请在系统弹窗中确认安装\"}"
             } catch (e: Exception) {
                 "{\"ok\":false,\"error\":\"更新失败：${e.message}\"}"
+            } finally {
+                updateInFlight = false
             }
             runOnUiThread {
                 webView.evaluateJavascript(
