@@ -173,6 +173,7 @@ assets/vendor/         Vditor（IR 编辑器）、marked（回顾解析）与 DO
 除网页外，项目可以打包成独立安装的软件，用户下载后开箱即用，并通过「一键更新」自动升级：
 
 - **Windows 桌面端**：`人生日历-<版本>-x64.zip`，解压即用的文件夹模式（Edge WebView2 渲染，Win10/11 自带运行时）。文件选择、读写走原生对话框，不再依赖浏览器的 File System Access 权限。
+  - 窗口渲染依赖 .NET Framework 4.7.2+（pythonnet/WinForms 的运行时依赖）。启动前会检测版本：缺失或组件加载失败时弹一次中文说明（含诊断日志路径 `%LOCALAPPDATA%\LifeCalendar\desktop.log`），并可一键用浏览器打开在线版，不再出现英文 Traceback 崩溃弹窗。
 - **Android 端**：`人生日历-<版本>.apk`，WebView 壳 + 系统文件选择器（SAF）读写 MD。日历文件放在用户自选的位置（如「下载」目录），卸载重装不影响数据。
 
 ### 一键更新

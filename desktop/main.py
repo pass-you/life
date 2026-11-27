@@ -32,10 +32,19 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-import webview
-
 APP_NAME = "人生日历"
 APP_ID = "LifeCalendar"
+
+# pywebview 在 Windows 依赖 .NET Framework 4.7.2+（pythonnet + WinForms）。
+# 启动前做一次版本检测，缺失时给出中文说明而不是英文崩溃弹窗。
+MIN_NETFX_RELEASE = 461808  # .NET Framework 4.7.2
+
+
+def _webview():
+    """惰性导入：pythonnet 会在这里加载 .NET，失败由 main() 统一提示。"""
+    import webview
+
+    return webview
 
 VERSION = "0.0.0"
 VERSION_URL = "https://pass-you.github.io/life/release/version.json"
@@ -157,8 +166,20 @@ class LocalServer(ThreadingHTTPServer):
         super().server_bind()
 
 
-def start_server() -> tuple[ThreadingHTTPServer, str]:
-    server = LocalServer(("127.0.0.1", 0), Handler)
+def start_server(preferred_port: int = 0) -> tuple[ThreadingHTTPServer, str]:
+    """优先占用固定端口；被占用时退回随机端口，保证总能启动。"""
+    ports = [preferred_port] if preferred_port else []
+    ports.append(0)
+    server = None
+    last_error: OSError | None = None
+    for port in ports:
+        try:
+            server = LocalServer(("127.0.0.1", port), Handler)
+            break
+        except OSError as exc:
+            last_error = exc
+    if server is None:
+        raise last_error or OSError("无法绑定本地端口")
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return server, "http://127.0.0.1:%d/" % server.server_address[1]
@@ -176,7 +197,7 @@ class Bridge:
     """网页调用 window.pywebview.api.request(method, argsJson)。"""
 
     def __init__(self, window_holder: dict):
-        self.window_holder = window_holder  # {"window": webview.Window}
+        self.window_holder = window_holder  # {"window": webview 窗口对象}
         self.saved_path: str = ""
 
     def request(self, method: str, args_json: str) -> str:
@@ -209,7 +230,7 @@ class Bridge:
             return result(False, error="窗口未就绪")
         # SAVE_DIALOG 的 save_filename 才是默认文件名参数
         paths = window.create_file_dialog(
-            webview.FileDialog.SAVE, save_filename=default_name,
+            _webview().FileDialog.SAVE, save_filename=default_name,
             file_types=("Markdown (*.md;*.markdown)", "所有文件 (*.*)"))
         if not paths:
             return result(canceled=True)
@@ -224,7 +245,7 @@ class Bridge:
         if window is None:
             return result(False, error="窗口未就绪")
         paths = window.create_file_dialog(
-            webview.FileDialog.OPEN, allow_multiple=False,
+            _webview().FileDialog.OPEN, allow_multiple=False,
             file_types=("Markdown (*.md;*.markdown;*.txt)", "所有文件 (*.*)"))
         if not paths:
             return result(canceled=True)
@@ -487,6 +508,79 @@ def cleanup_files(paths: list[str]) -> None:
                 time.sleep(0.25)
 
 
+def netfx_release() -> int:
+    """读取 .NET Framework 4.x 的 Release 号；没有则返回 0。"""
+    if os.name != "nt":
+        return 0
+    try:
+        import winreg
+
+        with winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full",
+        ) as key:
+            release, _ = winreg.QueryValueEx(key, "Release")
+        return int(release)
+    except Exception:  # noqa: BLE001 没有该键就是没装
+        return 0
+
+
+def log_line(text: str) -> None:
+    try:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        with open(CONFIG_DIR / "desktop.log", "a", encoding="utf-8") as fh:
+            fh.write("%s %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), text))
+    except OSError:
+        pass
+
+
+def show_message(title: str, text: str, error: bool = True) -> None:
+    try:
+        import ctypes
+
+        ctypes.windll.user32.MessageBoxW(None, text, title, 0x10 if error else 0x40)
+    except Exception:  # noqa: BLE001
+        sys.stderr.write(text + "\n")
+
+
+WEB_URL = "https://pass-you.github.io/life/"
+
+
+def ask_open_web(reason: str) -> None:
+    """桌面窗口起不来时给一次中文说明，并让用户选择是否打开在线版。"""
+    log_line("窗口启动失败：%s" % reason)
+    text = (
+        "%s\n\n"
+        "桌面窗口依赖 Windows 自带的 .NET Framework 4.7.2+ 与 WebView2 组件。\n"
+        "· 安装 .NET Framework 4.8 后重新打开「人生日历」即可；\n"
+        "· 或点「是」用浏览器打开在线版（日历仍可导入 / 导出 md 文件）。\n\n"
+        "诊断日志：%s" % (reason, CONFIG_DIR / "desktop.log")
+    )
+    try:
+        import ctypes
+
+        answer = ctypes.windll.user32.MessageBoxW(
+            None, text, APP_NAME, 0x04 | 0x40)  # MB_YESNO | MB_ICONINFORMATION
+    except Exception:  # noqa: BLE001
+        return
+    if answer == 6:  # IDYES
+        webbrowser.open(WEB_URL)
+
+
+def run_pywebview(url: str) -> None:
+    """默认渲染路径：pywebview(Edge WebView2) + 原生能力桥。"""
+    webview = _webview()
+    window_holder: dict = {}
+    bridge = Bridge(window_holder)
+    window = webview.create_window(
+        APP_NAME, url,
+        js_api=bridge,
+        width=1180, height=800, min_size=(375, 600),
+        background_color="#faf7f5")
+    window_holder["window"] = window
+    webview.start(gui="edgechromium")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=APP_NAME + " 桌面版")
     parser.add_argument("--cleanup", nargs="*", default=[], help="清理更新残留文件")
@@ -497,25 +591,42 @@ def main() -> int:
         cleanup_files([p for p in args.cleanup if p])
 
     # 每次启动清理更新残留
-    leftovers = [str(Path(tempfile.gettempdir()) / "LifeCalendar-update")]
-    cleanup_files(leftovers)
+    cleanup_files([str(Path(tempfile.gettempdir()) / "LifeCalendar-update")])
 
-    server, url = start_server()
+    try:
+        server, url = start_server(args.port)
+    except Exception as exc:  # noqa: BLE001
+        log_line("本地服务启动失败：%r" % (exc,))
+        show_message(APP_NAME, "本地服务启动失败：\n%s" % exc)
+        return 1
 
-    window_holder: dict = {}
-    bridge = Bridge(window_holder)
-
-    window = webview.create_window(
-        APP_NAME, url,
-        js_api=bridge,
-        width=1180, height=800, min_size=(375, 600),
-        background_color="#faf7f5")
-    window_holder["window"] = window
-
-    webview.start(gui="edgechromium")
-    server.shutdown()
-    return 0
+    try:
+        release = netfx_release()
+        if release < MIN_NETFX_RELEASE:
+            ask_open_web(
+                "当前系统未检测到可用的 .NET Framework 4.7.2+"
+                "（Release=%d）。" % release)
+            return 0
+        try:
+            run_pywebview(url)
+            return 0
+        except BaseException as exc:  # noqa: BLE001 缺组件时给中文说明
+            ask_open_web("桌面窗口启动失败：%s" % exc)
+            return 1
+    finally:
+        try:
+            server.shutdown()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except SystemExit:
+        raise
+    except BaseException as exc:  # noqa: BLE001 绝不把英文 Traceback 弹给用户
+        log_line("未捕获异常：%r" % (exc,))
+        show_message(APP_NAME, "启动失败：\n%s\n\n诊断日志：%s"
+                     % (exc, CONFIG_DIR / "desktop.log"))
+        raise SystemExit(1)

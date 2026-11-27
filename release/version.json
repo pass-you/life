@@ -1,16 +1,16 @@
 {
-  "version": "1.1.0",
-  "notes": "v1.1.0",
+  "version": "1.1.1",
+  "notes": "v1.1.1 修复桌面端启动崩溃：缺少 .NET Framework 4.7.2+ 或 pythonnet 组件加载失败时给出中文提示（不再英文 Traceback），可选一键打开在线版",
   "windows": {
-    "file": "人生日历-1.1.0-x64.zip",
-    "url": "release/人生日历-1.1.0-x64.zip",
-    "size": 16726161,
-    "sha256": "8e8e30e102c242368ee8da9fabc9d2ed2eb8b84fe1e90661d9aaf7b84f70fd02"
+    "file": "人生日历-1.1.1-x64.zip",
+    "url": "release/人生日历-1.1.1-x64.zip",
+    "size": 16728582,
+    "sha256": "d37813d0308f15c24f7a17514b25507383734de6967b080fce52b3cd860ddb1a"
   },
   "android": {
-    "file": "人生日历-1.1.0.apk",
-    "url": "release/人生日历-1.1.0.apk",
+    "file": "人生日历-1.1.1.apk",
+    "url": "release/人生日历-1.1.1.apk",
     "size": 3376627,
-    "sha256": "e4158c8247b93d49d0f24ba9d3b22f0e244ff6f6c383a4d9e08d11a30501e9b0"
+    "sha256": "427fe801169a731f35e93325ce20e6c47893cbd26634767959ff2a658dabbbc7"
   }
 }
