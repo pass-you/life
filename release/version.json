@@ -1,16 +1,16 @@
 {
-  "version": "1.1.2",
-  "notes": "v1.1.2",
+  "version": "1.2.0",
+  "notes": "v1.2.0 · 新增 GitHub 私有仓库云端同步\n- 网页版：PAT 接入，probe/pull/push 校验 sha，冲突二选一\n- 编辑停止 8s 自动推送（最长 45s 强制 flush），打开页面/切回标签页自动拉取\n- 断网、401、token 失效只影响云端状态，本地写盘不受影响\n- 设置面板可配置仓库/分支/路径/PAT，支持测试连接、立即拉取/推送\n- 桌面端与安卓端内置同一版本网页，同步 UI 已就位",
   "windows": {
-    "file": "人生日历-1.1.2-x64.zip",
-    "url": "release/人生日历-1.1.2-x64.zip",
-    "size": 16729273,
-    "sha256": "0b0bf228bf9682c35b54c4b85811d709c58ccb1ad0c7199fdd96ddcaacc16446"
+    "file": "人生日历-1.2.0-x64.zip",
+    "url": "release/人生日历-1.2.0-x64.zip",
+    "size": 16737863,
+    "sha256": "c9c59977c7badba565b55344f68231f55e442f217e48e53d6b5430a9eac01e60"
   },
   "android": {
-    "file": "人生日历-1.1.2.apk",
-    "url": "release/人生日历-1.1.2.apk",
-    "size": 3376627,
-    "sha256": "85fc471436c38ba9d91b94ed3c54047407e4445ab0176285ddf1a7755511fc96"
+    "file": "人生日历-1.2.0.apk",
+    "url": "release/人生日历-1.2.0.apk",
+    "size": 3387949,
+    "sha256": "6a620b98151f96c1cfe1cd9a5faceaaa8bc1cb83a914ddeb4602e8e3899d4064"
   }
 }

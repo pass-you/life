@@ -531,6 +531,8 @@
   const colorInput = document.getElementById('colorInput');
   const todayHint = document.getElementById('todayHint');
   const fileStatus = document.getElementById('fileStatus');
+  const cloudStatus = document.getElementById('cloudStatus');
+  const cloudBtn = document.getElementById('cloudBtn');
   const openBtn = document.getElementById('openBtn');
   const saveAsBtn = document.getElementById('saveAsBtn');
   const exportBtn = document.getElementById('exportBtn');
@@ -1241,6 +1243,24 @@
   let syncQueued = false;
   let editRevision = 0;
 
+  const CLOUD_PUSH_IDLE = 8000;
+  const CLOUD_PUSH_MAX = 45000;
+
+  // 云端同步与本地文件同步是两条独立失败域：断网时本地照常写盘。
+  const CLOUD = {
+    cfg: null,
+    sha: null,
+    knownDigest: '',
+    status: 'off', // off | idle | pulling | pushing | offline | conflict | auth | error
+    lastSync: 0,
+    lastError: '',
+    timer: 0,
+    maxTimer: 0,
+    inflight: false,
+    queued: false,
+    retryDelay: 0
+  };
+
   const supportsFsa = typeof window.showOpenFilePicker === 'function' &&
     typeof window.showSaveFilePicker === 'function';
 
@@ -1378,31 +1398,24 @@
 
     if (noticeText) {
       fileStatus.textContent = noticeText;
-      return;
-    }
-    if (!supportsFsa && !bridgeFile()) {
+    } else if (!supportsFsa && !bridgeFile()) {
       fileStatus.textContent = '当前浏览器不支持自动同步 · 请用「导出副本」保存';
-      return;
-    }
-    if (fileHandle) {
+    } else if (fileHandle) {
       if (syncState === 'saving') {
         fileStatus.textContent = '正在同步到 ' + fileName + '…';
-        return;
-      }
-      if (syncState === 'error') {
+      } else if (syncState === 'error') {
         fileStatus.textContent = '同步失败：' + syncError;
-        return;
+      } else {
+        fileStatus.textContent = fileName + (dirty ? ' · 待同步' : ' · 已同步');
       }
-      fileStatus.textContent = fileName + (dirty ? ' · 待同步' : ' · 已同步');
-      return;
-    }
-    if (pendingHandle) {
+    } else if (pendingHandle) {
       fileStatus.textContent = '上次的 ' + pendingHandle.name + ' 待恢复 · 点击「恢复同步」';
-      return;
+    } else {
+      fileStatus.textContent = dirty
+        ? '未连接文件 · 修改尚未保存，请选择保存位置'
+        : '未连接文件 · 选择保存位置后自动同步';
     }
-    fileStatus.textContent = dirty
-      ? '未连接文件 · 修改尚未保存，请选择保存位置'
-      : '未连接文件 · 选择保存位置后自动同步';
+    refreshCloudStatus();
   }
 
   function setNotice(message, isError) {
@@ -1429,6 +1442,7 @@
     } else {
       refreshStatus();
     }
+    scheduleCloudPush();
   }
 
   function scheduleSync() {
@@ -1477,6 +1491,586 @@
         syncQueued = false;
         if (syncState !== 'error') syncToFile();
       }
+    }
+  }
+
+  /* ---------------- 云端同步（GitHub 私有仓库 · PAT） ---------------- */
+
+  function hasLocalContent() {
+    const stats = countData();
+    return stats.years > 0 || stats.days > 0 || hasLibraryContent();
+  }
+
+  function cloudRepoLabel() {
+    return CLOUD.cfg ? CLOUD.cfg.owner + '/' + CLOUD.cfg.repo : '';
+  }
+
+  function cloudTimeLabel(timestamp) {
+    if (!timestamp) return '尚未同步';
+    const minutes = Math.floor(Math.max(0, Date.now() - timestamp) / 60000);
+    if (minutes < 1) return '刚刚';
+    if (minutes < 60) return minutes + ' 分钟前';
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return hours + ' 小时前';
+    return Math.floor(hours / 24) + ' 天前';
+  }
+
+  function cloudIsError() {
+    return CLOUD.status === 'offline' || CLOUD.status === 'error' || CLOUD.status === 'auth';
+  }
+
+  function refreshCloudStatus() {
+    const connected = !!CLOUD.cfg;
+    cloudBtn.classList.toggle('is-on', connected);
+    cloudBtn.textContent = connected ? '云端已连接' : '云端同步';
+
+    if (!connected && CLOUD.status !== 'auth') {
+      cloudStatus.hidden = true;
+      cloudStatus.textContent = '';
+      return;
+    }
+    let text = '';
+    if (CLOUD.status === 'pulling') {
+      text = '正在读取云端…';
+    } else if (CLOUD.status === 'pushing') {
+      text = '正在同步到云端…';
+    } else if (CLOUD.status === 'conflict') {
+      text = '检测到冲突 · 点此处理';
+    } else if (CLOUD.status === 'offline') {
+      text = '离线 · 云端待推送，点此重试';
+    } else if (CLOUD.status === 'auth') {
+      text = 'token 已失效 · 点此重新连接';
+    } else if (CLOUD.status === 'error') {
+      text = '云端同步失败 · 点此重试';
+    } else {
+      text = cloudRepoLabel() + (CLOUD.lastSync
+        ? ' · 已同步 · ' + cloudTimeLabel(CLOUD.lastSync)
+        : ' · 已连接 · 尚未同步');
+    }
+    cloudStatus.hidden = false;
+    cloudStatus.textContent = text;
+    cloudStatus.className = 'cloud-status' +
+      (cloudIsError() ? ' is-error' : '') +
+      (CLOUD.status === 'conflict' ? ' is-warn' : '');
+  }
+
+  function scheduleCloudPush() {
+    if (!CLOUD.cfg) return;
+    if (!CLOUD.maxTimer) {
+      CLOUD.maxTimer = setTimeout(function () {
+        CLOUD.maxTimer = 0;
+        pushCloud();
+      }, CLOUD_PUSH_MAX);
+    }
+    clearTimeout(CLOUD.timer);
+    CLOUD.timer = setTimeout(function () {
+      CLOUD.timer = 0;
+      clearTimeout(CLOUD.maxTimer);
+      CLOUD.maxTimer = 0;
+      pushCloud();
+    }, CLOUD_PUSH_IDLE);
+  }
+
+  function retryCloudPush() {
+    if (!CLOUD.cfg) return;
+    CLOUD.retryDelay = CLOUD.retryDelay
+      ? Math.min(CLOUD.retryDelay * 2, 300000)
+      : 30000;
+    clearTimeout(CLOUD.timer);
+    CLOUD.timer = setTimeout(function () {
+      CLOUD.timer = 0;
+      pushCloud();
+    }, CLOUD.retryDelay);
+  }
+
+  function markCloudFailure(res) {
+    CLOUD.lastError = LifeGithubSync.describe(res);
+    if (res.auth) CLOUD.status = 'auth';
+    else if (res.offline || res.rateLimit) CLOUD.status = 'offline';
+    else CLOUD.status = 'error';
+    refreshCloudStatus();
+  }
+
+  async function pushCloud() {
+    const cfg = CLOUD.cfg;
+    if (!cfg) return;
+    if (CLOUD.inflight) {
+      // 正在拉取时先记账，等这次网络往返结束再推，避免改动被静默丢掉。
+      CLOUD.queued = true;
+      clearTimeout(CLOUD.timer);
+      CLOUD.timer = setTimeout(function () {
+        CLOUD.timer = 0;
+        pushCloud();
+      }, 2000);
+      return;
+    }
+    clearTimeout(CLOUD.timer);
+    CLOUD.timer = 0;
+    if (flushVditorEditors()) {
+      dirty = true;
+      editRevision += 1;
+    }
+    const text = buildMarkdown();
+    const digest = LifeGithubSync.digest(text);
+    if (CLOUD.sha && digest === CLOUD.knownDigest) {
+      if (CLOUD.status !== 'idle') {
+        CLOUD.status = 'idle';
+        refreshCloudStatus();
+      }
+      return;
+    }
+
+    CLOUD.inflight = true;
+    CLOUD.status = 'pushing';
+    refreshCloudStatus();
+    let res;
+    try {
+      res = await LifeGithubSync.push(cfg, text, CLOUD.sha);
+    } catch (err) {
+      res = { ok: false, error: err && err.message ? err.message : '推送失败' };
+    }
+    CLOUD.inflight = false;
+
+    if (res.ok) {
+      CLOUD.sha = res.sha || CLOUD.sha;
+      CLOUD.knownDigest = digest;
+      CLOUD.status = 'idle';
+      CLOUD.lastSync = Date.now();
+      CLOUD.lastError = '';
+      CLOUD.retryDelay = 0;
+      LifeGithubSync.saveMeta({ sha: CLOUD.sha, digest: digest });
+      refreshCloudStatus();
+    } else if (res.conflict) {
+      CLOUD.status = 'conflict';
+      CLOUD.lastError = LifeGithubSync.describe(res);
+      refreshCloudStatus();
+      openCloudConflict(res.remoteText, res.remoteSha);
+    } else {
+      markCloudFailure(res);
+      if (res.offline || res.rateLimit) retryCloudPush();
+    }
+
+    if (CLOUD.queued) {
+      CLOUD.queued = false;
+      if (CLOUD.status === 'idle') pushCloud();
+    }
+  }
+
+  function summarizeMarkdown(text) {
+    const source = String(text || '');
+    return {
+      days: (source.match(/^#### 日期 · /gm) || []).length,
+      chars: source.replace(/\s+/g, '').length
+    };
+  }
+
+  function applyCloudContent(text, sha) {
+    const parsed = parseMarkdown(text);
+    applyParsedContent(parsed);
+    CLOUD.sha = sha || null;
+    CLOUD.knownDigest = LifeGithubSync.digest(text);
+    CLOUD.status = 'idle';
+    CLOUD.lastSync = Date.now();
+    CLOUD.lastError = '';
+    CLOUD.retryDelay = 0;
+    LifeGithubSync.saveMeta({ sha: CLOUD.sha, digest: CLOUD.knownDigest });
+    currentKey = '';
+    dirty = false;
+    render();
+    refreshMovieEntry();
+    if (fileHandle) syncToFile();
+    refreshCloudStatus();
+    const stats = countData();
+    setNotice('已读取云端内容 · ' + stats.years + ' 年 · ' + stats.days + ' 天记录', false);
+  }
+
+  async function pullCloud(manual) {
+    if (!CLOUD.cfg) {
+      if (manual) openCloudPanel();
+      return;
+    }
+    if (CLOUD.inflight) {
+      if (manual) setNotice('同步正在进行，请稍候', false);
+      return;
+    }
+    CLOUD.inflight = true;
+    CLOUD.status = 'pulling';
+    refreshCloudStatus();
+    if (flushVditorEditors()) {
+      dirty = true;
+      editRevision += 1;
+    }
+    let res;
+    const startRevision = editRevision;
+    try {
+      res = await LifeGithubSync.pull(CLOUD.cfg);
+    } catch (err) {
+      res = { ok: false, error: err && err.message ? err.message : '读取失败' };
+    }
+    CLOUD.inflight = false;
+
+    if (!res.ok) {
+      markCloudFailure(res);
+      if (manual) setNotice('读取云端失败：' + CLOUD.lastError, true);
+      return;
+    }
+
+    if (!res.exists) {
+      CLOUD.sha = null;
+      CLOUD.knownDigest = '';
+      CLOUD.status = 'idle';
+      refreshCloudStatus();
+      if (hasLocalContent()) {
+        if (manual) setNotice('云端还没有文件，正在上传本地内容', false);
+        scheduleCloudPush();
+      } else if (manual) {
+        setNotice('云端还没有 ' + CLOUD.cfg.path + '，记录内容后会自动上传', false);
+      }
+      return;
+    }
+
+    const remoteDigest = LifeGithubSync.digest(res.text);
+    const localDigest = LifeGithubSync.digest(buildMarkdown());
+    if (remoteDigest === localDigest) {
+      CLOUD.sha = res.sha;
+      CLOUD.knownDigest = remoteDigest;
+      CLOUD.status = 'idle';
+      CLOUD.lastSync = Date.now();
+      CLOUD.retryDelay = 0;
+      LifeGithubSync.saveMeta({ sha: CLOUD.sha, digest: remoteDigest });
+      refreshCloudStatus();
+      if (manual) setNotice('云端与本地一致', false);
+      return;
+    }
+
+    // 拉取期间用户又改了内容：不能用云端结果直接覆盖，交给二选一。
+    if (startRevision !== editRevision) {
+      CLOUD.status = 'conflict';
+      CLOUD.lastError = '拉取期间本地有新的改动';
+      refreshCloudStatus();
+      openCloudConflict(res.text, res.sha);
+      return;
+    }
+
+    // 本地还没有任何内容（新浏览器、刚刷新、文件权限丢失）：云端就是完整副本。
+    if (!hasLocalContent()) {
+      applyCloudContent(res.text, res.sha);
+      return;
+    }
+
+    // 云端仍是上次同步的版本，只有本地改过：直接推送，不算冲突。
+    if (CLOUD.knownDigest && remoteDigest === CLOUD.knownDigest) {
+      CLOUD.sha = res.sha;
+      CLOUD.status = 'idle';
+      LifeGithubSync.saveMeta({ sha: CLOUD.sha, digest: CLOUD.knownDigest });
+      refreshCloudStatus();
+      scheduleCloudPush();
+      if (manual) setNotice('云端没有新改动，正在推送本地内容', false);
+      return;
+    }
+
+    // 本地没改过（与上次同步一致）：快进到云端。
+    if (CLOUD.knownDigest && localDigest === CLOUD.knownDigest) {
+      applyCloudContent(res.text, res.sha);
+      return;
+    }
+
+    CLOUD.status = 'conflict';
+    CLOUD.lastError = '本地和云端都有改动';
+    refreshCloudStatus();
+    openCloudConflict(res.text, res.sha);
+  }
+
+  async function restoreCloudSync() {
+    const cfg = await LifeGithubSync.load();
+    if (!cfg) {
+      CLOUD.status = 'off';
+      refreshCloudStatus();
+      return;
+    }
+    CLOUD.cfg = cfg;
+    CLOUD.status = 'idle';
+    const meta = await LifeGithubSync.loadMeta();
+    if (meta) {
+      CLOUD.sha = meta.sha;
+      CLOUD.knownDigest = meta.digest;
+      CLOUD.lastSync = meta.at || 0;
+    }
+    refreshCloudStatus();
+    await pullCloud(false);
+  }
+
+  function closeCloudModal(overlay) {
+    if (!overlay || !overlay.isConnected) return;
+    overlay.remove();
+    if (!document.querySelector('.expense-modal')) {
+      document.body.classList.remove('modal-open');
+    }
+  }
+
+  function openCloudConflict(remoteText, remoteSha) {
+    if (document.querySelector('.cloud-conflict')) return;
+    if (!CLOUD.cfg) return;
+
+    const localText = buildMarkdown();
+    const localStats = summarizeMarkdown(localText);
+    const remoteStats = summarizeMarkdown(remoteText || '');
+
+    const overlay = document.createElement('div');
+    overlay.className = 'expense-modal cloud-conflict';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-labelledby', 'cloud-conflict-title');
+    overlay.innerHTML =
+      '<div class="expense-sheet cloud-sheet">' +
+      '<div class="expense-head"><div>' +
+      '<p class="eyebrow">云端同步</p>' +
+      '<h2 id="cloud-conflict-title">发现冲突</h2>' +
+      '<p class="sub">' + esc(cloudRepoLabel()) + ' 的云端文件与本机都有改动</p>' +
+      '</div><button type="button" class="expense-close" aria-label="关闭冲突提示">×</button></div>' +
+      '<div class="cloud-compare">' +
+      '<div class="cloud-side"><span>本机</span>' +
+      '<strong>' + localStats.days + ' 天记录</strong>' +
+      '<p>' + localStats.chars + ' 字</p></div>' +
+      '<div class="cloud-side"><span>云端</span>' +
+      '<strong>' + remoteStats.days + ' 天记录</strong>' +
+      '<p>' + remoteStats.chars + ' 字</p></div>' +
+      '</div>' +
+      '<p class="cloud-warn">二选一：保留本地会用本机内容覆盖云端；使用云端会丢弃本机尚未同步的改动。</p>' +
+      '<div class="cloud-conflict-actions">' +
+      '<button type="button" class="btn btn-primary" data-cloud-keep="local">保留本地并覆盖云端</button>' +
+      '<button type="button" class="btn" data-cloud-keep="remote">使用云端并覆盖本地</button>' +
+      '</div>' +
+      '<p class="cloud-hint">需要逐字段合并请等待后续版本的冲突处理；当前版本只支持整体二选一。</p>' +
+      '</div>';
+    document.body.appendChild(overlay);
+    document.body.classList.add('modal-open');
+
+    function onKey(event) {
+      if (event.key === 'Escape') close();
+    }
+
+    function close() {
+      closeCloudModal(overlay);
+      document.removeEventListener('keydown', onKey);
+      if (CLOUD.status === 'conflict') {
+        CLOUD.status = 'idle';
+        refreshCloudStatus();
+      }
+    }
+
+    overlay.querySelector('.expense-close').addEventListener('click', close);
+    overlay.addEventListener('click', function (event) {
+      if (event.target === overlay) close();
+    });
+    document.addEventListener('keydown', onKey);
+
+    overlay.querySelector('[data-cloud-keep="local"]').addEventListener('click', function () {
+      closeCloudModal(overlay);
+      document.removeEventListener('keydown', onKey);
+      CLOUD.sha = remoteSha || null;
+      CLOUD.status = 'idle';
+      CLOUD.knownDigest = '';
+      refreshCloudStatus();
+      setNotice('正在用本地内容覆盖云端…', false);
+      pushCloud();
+    });
+
+    overlay.querySelector('[data-cloud-keep="remote"]').addEventListener('click', function () {
+      closeCloudModal(overlay);
+      document.removeEventListener('keydown', onKey);
+      applyCloudContent(remoteText || '', remoteSha || null);
+    });
+  }
+
+  function openCloudPanel() {
+    if (document.querySelector('.cloud-panel')) return;
+    const cfg = CLOUD.cfg || {};
+    const tokenSaved = !!cfg.token;
+
+    const overlay = document.createElement('div');
+    overlay.className = 'expense-modal cloud-panel';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-labelledby', 'cloud-panel-title');
+    overlay.innerHTML =
+      '<div class="expense-sheet cloud-sheet">' +
+      '<div class="expense-head"><div>' +
+      '<p class="eyebrow">云端同步</p>' +
+      '<h2 id="cloud-panel-title">GitHub 私有仓库</h2>' +
+      '<p class="sub">日历写进你自己的私有仓库，换设备打开就能继续写</p>' +
+      '</div><button type="button" class="expense-close" aria-label="关闭同步设置">×</button></div>' +
+      '<div class="cloud-form">' +
+      '<label class="cloud-field"><span>仓库</span>' +
+      '<input id="cloud-repo" type="text" autocomplete="off" spellcheck="false" ' +
+      'value="' + esc(cfg.owner && cfg.repo ? cfg.owner + '/' + cfg.repo : '') + '" ' +
+      'placeholder="pass-you/life-data（也可粘贴仓库链接）"></label>' +
+      '<div class="cloud-row">' +
+      '<label class="cloud-field"><span>分支</span>' +
+      '<input id="cloud-branch" type="text" autocomplete="off" spellcheck="false" ' +
+      'value="' + esc(cfg.branch || 'main') + '" placeholder="main"></label>' +
+      '<label class="cloud-field"><span>文件路径</span>' +
+      '<input id="cloud-path" type="text" autocomplete="off" spellcheck="false" ' +
+      'value="' + esc(cfg.path || LifeGithubSync.DEFAULT_PATH) + '" placeholder="人生日历.md"></label>' +
+      '</div>' +
+      '<label class="cloud-field"><span>Personal Access Token</span>' +
+      '<input id="cloud-token" type="password" autocomplete="off" spellcheck="false" ' +
+      'placeholder="' + (tokenSaved ? '已保存，留空继续使用' : 'github_pat_… 或 ghp_…') + '"></label>' +
+      '</div>' +
+      '<p class="cloud-hint">token 只保存在这台浏览器的本地数据库，不会写进 md 文件，也不会经过任何第三方服务器。' +
+      '建议在 GitHub → Settings → Developer settings → Fine-grained tokens 生成：' +
+      '只勾这个仓库，权限只给 <b>Contents: Read and write</b>。' +
+      '<a href="https://github.com/settings/tokens?type=fine-grained" target="_blank" rel="noopener">创建 token</a>' +
+      ' · <a href="https://github.com/settings/tokens" target="_blank" rel="noopener">撤销 token</a></p>' +
+      '<p class="cloud-panel-status" id="cloud-panel-status" role="status" aria-live="polite"></p>' +
+      '<div class="cloud-actions">' +
+      '<button type="button" class="btn btn-sm" id="cloud-test">测试连接</button>' +
+      '<button type="button" class="btn btn-sm btn-primary" id="cloud-save">保存并同步</button>' +
+      (CLOUD.cfg ? '<button type="button" class="btn btn-sm" id="cloud-pull">立即拉取</button>' +
+        '<button type="button" class="btn btn-sm" id="cloud-push">立即推送</button>' +
+        '<button type="button" class="btn btn-sm cloud-danger" id="cloud-disconnect">断开</button>' : '') +
+      '</div>' +
+      '</div>';
+    document.body.appendChild(overlay);
+    document.body.classList.add('modal-open');
+
+    const statusEl = overlay.querySelector('#cloud-panel-status');
+    const tokenInput = overlay.querySelector('#cloud-token');
+    const repoInput = overlay.querySelector('#cloud-repo');
+    const branchInput = overlay.querySelector('#cloud-branch');
+    const pathInput = overlay.querySelector('#cloud-path');
+
+    function setStatus(text, isError) {
+      statusEl.textContent = text;
+      statusEl.classList.toggle('is-error', !!isError);
+    }
+
+    function readForm() {
+      const typed = tokenInput.value.trim();
+      return LifeGithubSync.normalize({
+        token: typed || (cfg.token || ''),
+        owner: repoInput.value,
+        repo: '',
+        branch: branchInput.value,
+        path: pathInput.value
+      });
+    }
+
+    function close() {
+      closeCloudModal(overlay);
+      document.removeEventListener('keydown', onKey);
+    }
+
+    function onKey(event) {
+      if (event.key === 'Escape') close();
+    }
+
+    overlay.querySelector('.expense-close').addEventListener('click', close);
+    overlay.addEventListener('click', function (event) {
+      if (event.target === overlay) close();
+    });
+    document.addEventListener('keydown', onKey);
+
+    async function testConnection() {
+      const form = readForm();
+      if (!LifeGithubSync.valid(form)) {
+        setStatus('请先填写仓库和 token', true);
+        return;
+      }
+      setStatus('正在连接 GitHub…', false);
+      const res = await LifeGithubSync.probe(form);
+      if (!res.ok) {
+        setStatus('连接失败：' + LifeGithubSync.describe(res), true);
+        return;
+      }
+      const size = res.exists ? (res.size > 1024 ? Math.round(res.size / 1024) + ' KB' : res.size + ' B') : '0';
+      setStatus('连接正常 · ' + res.repo + ' · ' +
+        (res.private ? '私有仓库' : '⚠ 公开仓库，内容会公开') + ' · ' +
+        (res.exists ? '云端文件 ' + size : '云端还没有该文件'), !res.private);
+    }
+
+    overlay.querySelector('#cloud-test').addEventListener('click', testConnection);
+
+    overlay.querySelector('#cloud-save').addEventListener('click', async function () {
+      const form = readForm();
+      if (!LifeGithubSync.valid(form)) {
+        setStatus('请先填写仓库和 token', true);
+        return;
+      }
+      setStatus('正在验证仓库…', false);
+      const probe = await LifeGithubSync.probe(form);
+      if (!probe.ok) {
+        setStatus('保存失败：' + LifeGithubSync.describe(probe), true);
+        return;
+      }
+      if (!probe.private) {
+        const first = window.confirm('这个仓库是公开的，日历内容（包含日记、电影清单、TMDB Key）会被所有人看到。继续吗？');
+        if (!first) {
+          setStatus('已取消：请换一个私有仓库', true);
+          return;
+        }
+        const second = window.confirm('再次确认：确实要把私人日历写进公开仓库？');
+        if (!second) {
+          setStatus('已取消：请换一个私有仓库', true);
+          return;
+        }
+      }
+      try {
+        await LifeGithubSync.save(form);
+      } catch (err) {
+        setStatus('token 保存失败：' + (err && err.message ? err.message : '浏览器存储不可用'), true);
+        return;
+      }
+      CLOUD.cfg = form;
+      CLOUD.sha = probe.sha;
+      CLOUD.knownDigest = '';
+      CLOUD.status = 'idle';
+      CLOUD.retryDelay = 0;
+      refreshCloudStatus();
+      setStatus('已保存 · 正在同步…', false);
+      close();
+      pullCloud(true);
+    });
+
+    if (CLOUD.cfg) {
+      overlay.querySelector('#cloud-pull').addEventListener('click', function () {
+        close();
+        pullCloud(true);
+      });
+      overlay.querySelector('#cloud-push').addEventListener('click', function () {
+        close();
+        pushCloud();
+        setNotice('正在推送本地内容到云端…', false);
+      });
+      overlay.querySelector('#cloud-disconnect').addEventListener('click', async function () {
+        if (!window.confirm('断开后云端文件不会被删除，本机 token 会从这个浏览器移除。继续吗？')) return;
+        await LifeGithubSync.clear();
+        CLOUD.cfg = null;
+        CLOUD.sha = null;
+        CLOUD.knownDigest = '';
+        CLOUD.status = 'off';
+        CLOUD.lastError = '';
+        clearTimeout(CLOUD.timer);
+        CLOUD.timer = 0;
+        clearTimeout(CLOUD.maxTimer);
+        CLOUD.maxTimer = 0;
+        refreshCloudStatus();
+        setNotice('已断开云端同步', false);
+        close();
+      });
+    }
+
+    setTimeout(function () { tokenInput.focus(); }, 30);
+  }
+
+  function flushCloudOnHide() {
+    if (!CLOUD.cfg) return;
+    if (CLOUD.timer || CLOUD.maxTimer) {
+      clearTimeout(CLOUD.timer);
+      CLOUD.timer = 0;
+      clearTimeout(CLOUD.maxTimer);
+      CLOUD.maxTimer = 0;
+      pushCloud();
     }
   }
 
@@ -1535,6 +2129,7 @@
     setNotice((loadContent ? '已打开 ' : '已连接 ') + fileName + ' · ' +
       stats.years + ' 年 · ' + stats.days + ' 天记录', false);
     if (needsSync) scheduleSync();
+    if (CLOUD.cfg && needsSync) scheduleCloudPush();
   }
 
   async function attachBridgeFile(name, loadContent) {
@@ -5120,6 +5715,7 @@
       setNotice('已导入 ' + file.name + ' · 未连接文件' +
         (supportsFsa ? '，点「选择保存位置」选中该文件即可自动同步' : '，修改需导出') +
         (parsed.warnings ? '，跳过 ' + parsed.warnings + ' 处异常日期' : ''), false);
+      if (CLOUD.cfg) scheduleCloudPush();
     }).catch(function (err) {
       setNotice(err && err.message ? err.message : '导入失败，请确认文件格式', true);
     });
@@ -5330,6 +5926,30 @@
     render();
   });
   window.addEventListener('resize', scheduleWeatherOverlaySize);
+  cloudBtn.addEventListener('click', openCloudPanel);
+  cloudStatus.addEventListener('keydown', function (event) {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      cloudStatus.click();
+    }
+  });
+  cloudStatus.addEventListener('click', function () {
+    if (CLOUD.status === 'conflict') {
+      if (!document.querySelector('.cloud-conflict')) pullCloud(true);
+    } else if (CLOUD.status === 'auth') {
+      openCloudPanel();
+    } else if (CLOUD.status === 'offline' || CLOUD.status === 'error') {
+      CLOUD.status = 'idle';
+      pushCloud();
+    } else {
+      openCloudPanel();
+    }
+  });
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) flushCloudOnHide();
+    else if (CLOUD.cfg) pullCloud(false);
+  });
+  window.addEventListener('pagehide', flushCloudOnHide);
   render();
   openMovieFromQuery();
   LifeBridgeClient.detect().then(function () {
@@ -5337,7 +5957,11 @@
       saveAsBtn.hidden = false;
       setupShellUpdate();
     }
-    restoreStoredHandle();
+    return restoreStoredHandle();
+  }).then(function () {
+    return restoreCloudSync();
+  }).catch(function () {
+    return restoreCloudSync();
   });
 
   function setupShellUpdate() {
